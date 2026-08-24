@@ -2,6 +2,9 @@
 //!
 //! Coordinates are deliberately abstract Cartesian coordinates. They describe
 //! where a station is drawn and are not longitude and latitude.
+//!
+//! YAML is the primary, human-editable manifest format. JSON uses the same
+//! schema and is available for exchanging maps with web applications.
 
 use std::collections::BTreeMap;
 
@@ -64,6 +67,16 @@ impl MetroMap {
     /// Serialize a metro map as a YAML manifest.
     pub fn to_yaml(&self) -> Result<String, serde_yaml::Error> {
         serde_yaml::to_string(self)
+    }
+
+    /// Deserialize a metro map from JSON using the same schema as YAML.
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+
+    /// Serialize a metro map as compact JSON suitable for transport to a WebUI.
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
     }
 }
 
@@ -130,12 +143,27 @@ lines:
     }
 
     #[test]
-    fn serde_model_also_round_trips_through_json() {
+    fn converts_from_yaml_to_json_and_back() {
         let map = MetroMap::from_yaml(MAP_YAML).unwrap();
-        let encoded = serde_json::to_string(&map).unwrap();
-        let decoded: MetroMap = serde_json::from_str(&encoded).unwrap();
+        let encoded = map.to_json().unwrap();
+        let decoded = MetroMap::from_json(&encoded).unwrap();
 
         assert_eq!(decoded, map);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&encoded).unwrap()["lines"][0]["names"]["en"]
+                [0],
+            "Line 11"
+        );
+    }
+
+    #[test]
+    fn converts_from_json_to_primary_yaml_format() {
+        let map = MetroMap::from_yaml(MAP_YAML).unwrap();
+        let json = map.to_json().unwrap();
+
+        let yaml = MetroMap::from_json(&json).unwrap().to_yaml().unwrap();
+
+        assert_eq!(MetroMap::from_yaml(&yaml).unwrap(), map);
     }
 
     #[test]
