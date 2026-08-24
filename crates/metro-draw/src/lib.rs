@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Names indexed by a locale such as `en` or `zh-CN`.
 ///
@@ -34,11 +34,31 @@ pub struct Station {
 }
 
 /// A point in the map's abstract Cartesian coordinate system.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+///
+/// It is serialized and deserialized as `[x, y]`.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Position {
     pub x: f64,
     pub y: f64,
+}
+
+impl Serialize for Position {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        [self.x, self.y].serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Position {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let [x, y] = <[f64; 2]>::deserialize(deserializer)?;
+        Ok(Self { x, y })
+    }
 }
 
 /// A metro line composed of one or more paths.
@@ -47,6 +67,7 @@ pub struct Position {
 pub struct Line {
     pub id: String,
     pub names: LocalizedNames,
+    pub color: String,
     pub paths: Vec<LinePath>,
 }
 
@@ -66,7 +87,7 @@ impl MetroMap {
 
     /// Serialize a metro map as a YAML manifest.
     pub fn to_yaml(&self) -> Result<String, serde_yaml::Error> {
-        serde_yaml::to_string(self)
+        serde_yaml::to_string(self).map(inline_yaml_positions)
     }
 
     /// Deserialize a metro map from JSON using the same schema as YAML.
@@ -78,6 +99,38 @@ impl MetroMap {
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(self)
     }
+}
+
+/// `serde_yaml` emits all sequences in block style. Position is the one place
+/// where the manifest requires flow style to keep the document compact.
+fn inline_yaml_positions(yaml: String) -> String {
+    let lines: Vec<_> = yaml.lines().collect();
+    let mut output = String::with_capacity(yaml.len());
+    let mut index = 0;
+
+    while index < lines.len() {
+        let line = lines[index];
+        if line.trim() == "position:"
+            && let (Some(x), Some(y)) = (lines.get(index + 1), lines.get(index + 2))
+            && let (Some(x), Some(y)) = (x.trim().strip_prefix("- "), y.trim().strip_prefix("- "))
+        {
+            let indentation = &line[..line.len() - line.trim_start().len()];
+            output.push_str(indentation);
+            output.push_str("position: [");
+            output.push_str(x);
+            output.push_str(", ");
+            output.push_str(y);
+            output.push_str("]\n");
+            index += 3;
+            continue;
+        }
+
+        output.push_str(line);
+        output.push('\n');
+        index += 1;
+    }
+
+    output
 }
 
 #[cfg(test)]
@@ -92,9 +145,7 @@ stations:
         - 福田
       en:
         - Futian
-    position:
-      x: 10.0
-      y: 20.0
+    position: [10.0, 20.0]
 
   - id: airport
     names:
@@ -102,9 +153,7 @@ stations:
         - 机场
       en:
         - Airport
-    position:
-      x: 90.0
-      y: 20.0
+    position: [90.0, 20.0]
 
 lines:
   - id: line-11
@@ -115,6 +164,7 @@ lines:
       en:
         - Line 11
         - Airport Express
+    color: '#672146'
     paths:
       - stations:
           - futian
@@ -123,13 +173,15 @@ lines:
 "#;
 
     #[test]
-    fn deserializes_yaml_manifest() {
+    fn deserializes_position_sequence() {
         let map = MetroMap::from_yaml(MAP_YAML).unwrap();
 
         assert_eq!(map.stations.len(), 2);
         assert_eq!(map.stations[0].position, Position { x: 10.0, y: 20.0 });
+        assert_eq!(map.stations[1].position, Position { x: 90.0, y: 20.0 });
         assert_eq!(map.lines[0].names["en"][0], "Line 11");
         assert_eq!(map.lines[0].names["en"][1], "Airport Express");
+        assert_eq!(map.lines[0].color, "#672146");
         assert!(!map.lines[0].paths[0].closed);
     }
 
@@ -140,6 +192,9 @@ lines:
         let decoded = MetroMap::from_yaml(&encoded).unwrap();
 
         assert_eq!(decoded, map);
+        assert!(encoded.contains("position: [10.0, 20.0]"));
+        assert!(encoded.contains("position: [90.0, 20.0]"));
+        assert!(!encoded.contains("position:\n"));
     }
 
     #[test]
@@ -149,6 +204,10 @@ lines:
         let decoded = MetroMap::from_json(&encoded).unwrap();
 
         assert_eq!(decoded, map);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&encoded).unwrap()["stations"][0]["position"],
+            serde_json::json!([10.0, 20.0])
+        );
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&encoded).unwrap()["lines"][0]["names"]["en"]
                 [0],
@@ -167,12 +226,19 @@ lines:
     }
 
     #[test]
-    fn rejects_geographic_coordinate_fields() {
-        let yaml = MAP_YAML
-            .replace("x: 10.0", "longitude: 114.0")
-            .replace("y: 20.0", "latitude: 22.0");
-        let error = MetroMap::from_yaml(&yaml).unwrap_err();
+    fn rejects_position_mapping() {
+        let yaml = MAP_YAML.replace(
+            "position: [10.0, 20.0]",
+            "position:\n      x: 10.0\n      y: 20.0",
+        );
 
-        assert!(error.to_string().contains("unknown field `longitude`"));
+        assert!(MetroMap::from_yaml(&yaml).is_err());
+    }
+
+    #[test]
+    fn rejects_position_sequences_with_the_wrong_length() {
+        let yaml = MAP_YAML.replace("position: [90.0, 20.0]", "position: [90.0]");
+
+        assert!(MetroMap::from_yaml(&yaml).is_err());
     }
 }
