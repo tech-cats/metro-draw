@@ -6,9 +6,13 @@
 //! YAML is the primary, human-editable manifest format. JSON uses the same
 //! schema and is available for exchanging maps with web applications.
 
+mod render;
+
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+pub use render::{RenderError, render_topology_svg};
 
 /// Names indexed by a locale such as `en` or `zh-CN`.
 ///
