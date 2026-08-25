@@ -19,6 +19,9 @@ mtrd check -vv map.yaml
 mtrd render -to map.svg map.yaml
 mtrd render -o map.svg -t map.yaml
 
-# Without -o, write ./mtrd-<microsecond timestamp>.svg.
+# Without -o or -T, append .svg to the input path.
 mtrd render --topology map.yaml
+
+# Use -T to write ./mtrd-<microsecond timestamp>.svg.
+mtrd render -tT map.yaml
 ```
