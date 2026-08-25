@@ -41,9 +41,13 @@ enum Command {
         #[arg(short = 't', long, required = true)]
         topology: bool,
 
-        /// SVG destination (defaults to mtrd-<microsecond timestamp>.svg).
-        #[arg(short = 'o', long, value_name = "FILE")]
+        /// SVG destination (defaults to <input path>.svg).
+        #[arg(short = 'o', long, value_name = "FILE", conflicts_with = "timestamp")]
         output: Option<PathBuf>,
+
+        /// Name the output mtrd-<microsecond timestamp>.svg.
+        #[arg(short = 'T', long, conflicts_with = "output")]
+        timestamp: bool,
 
         /// Metro map file to render.
         input: PathBuf,
@@ -146,19 +150,17 @@ fn run(cli: Cli) -> Result<String, CliError> {
         Command::Render {
             topology: _,
             output,
+            timestamp,
             input,
-        } => render(&input, output.as_deref()),
+        } => render(&input, output.as_deref(), timestamp),
     }
 }
 
-fn render(input: &Path, output: Option<&Path>) -> Result<String, CliError> {
+fn render(input: &Path, output: Option<&Path>, timestamp: bool) -> Result<String, CliError> {
     let format = Format::from_path(input)?;
     let map = read_map(input, format)?;
     let svg = render_topology_svg(&map)?;
-    let output = match output {
-        Some(output) => output.to_path_buf(),
-        None => default_render_output()?,
-    };
+    let output = render_output_path(input, output, timestamp)?;
 
     fs::write(&output, svg).map_err(|source| CliError::Write {
         path: output.clone(),
@@ -167,7 +169,20 @@ fn render(input: &Path, output: Option<&Path>) -> Result<String, CliError> {
     Ok(output.display().to_string())
 }
 
-fn default_render_output() -> Result<PathBuf, CliError> {
+fn render_output_path(
+    input: &Path,
+    output: Option<&Path>,
+    timestamp: bool,
+) -> Result<PathBuf, CliError> {
+    if let Some(output) = output {
+        return Ok(output.to_path_buf());
+    }
+    if !timestamp {
+        let mut output = input.as_os_str().to_owned();
+        output.push(".svg");
+        return Ok(output.into());
+    }
+
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -294,6 +309,7 @@ lines:
             Command::Render {
                 topology: true,
                 output: Some(output),
+                timestamp: false,
                 input,
             } if output == Path::new("map.svg") && input == Path::new("map.yaml")
         ));
@@ -305,14 +321,59 @@ lines:
             Command::Render {
                 topology: true,
                 output: Some(output),
+                timestamp: false,
                 input,
             } if output == Path::new("map.svg") && input == Path::new("map.yaml")
+        ));
+
+        let timestamped = Cli::try_parse_from(["mtrd", "render", "-tT", "map.yaml"]).unwrap();
+        assert!(matches!(
+            timestamped.command,
+            Command::Render {
+                topology: true,
+                output: None,
+                timestamp: true,
+                input,
+            } if input == Path::new("map.yaml")
         ));
     }
 
     #[test]
     fn topology_flag_is_required() {
         assert!(Cli::try_parse_from(["mtrd", "render", "map.yaml"]).is_err());
+    }
+
+    #[test]
+    fn timestamp_and_explicit_output_conflict() {
+        assert!(
+            Cli::try_parse_from(["mtrd", "render", "-tT", "-o", "map.svg", "map.yaml"]).is_err()
+        );
+    }
+
+    #[test]
+    fn selects_render_output_path() {
+        let input = Path::new("examples/simple.yaml");
+
+        assert_eq!(
+            render_output_path(input, None, false).unwrap(),
+            Path::new("examples/simple.yaml.svg")
+        );
+        assert_eq!(
+            render_output_path(input, Some(Path::new("map.svg")), false).unwrap(),
+            Path::new("map.svg")
+        );
+
+        let timestamped = render_output_path(input, None, true).unwrap();
+        assert_eq!(
+            timestamped.parent().unwrap(),
+            std::env::current_dir().unwrap()
+        );
+        let filename = timestamped.file_name().unwrap().to_str().unwrap();
+        let timestamp = filename
+            .strip_prefix("mtrd-")
+            .and_then(|filename| filename.strip_suffix(".svg"))
+            .unwrap();
+        assert!(timestamp.parse::<u128>().is_ok());
     }
 
     #[test]
@@ -370,7 +431,7 @@ lines:
         fs::write(&input, YAML).unwrap();
 
         assert_eq!(
-            render(&input, Some(&output)).unwrap(),
+            render(&input, Some(&output), false).unwrap(),
             output.display().to_string()
         );
         let svg = fs::read_to_string(&output).unwrap();
@@ -380,5 +441,23 @@ lines:
 
         fs::remove_file(input).unwrap();
         fs::remove_file(output).unwrap();
+    }
+
+    #[test]
+    fn renders_next_to_the_input_by_default() {
+        let input = temporary_path("yaml");
+        let mut expected = input.as_os_str().to_owned();
+        expected.push(".svg");
+        let expected = PathBuf::from(expected);
+        fs::write(&input, YAML).unwrap();
+
+        assert_eq!(
+            render(&input, None, false).unwrap(),
+            expected.display().to_string()
+        );
+        assert!(fs::read_to_string(&expected).unwrap().contains("<svg"));
+
+        fs::remove_file(input).unwrap();
+        fs::remove_file(expected).unwrap();
     }
 }
