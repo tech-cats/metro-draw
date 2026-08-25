@@ -14,4 +14,11 @@ mtrd check map.yaml
 # Print the parsed map as canonical YAML, or as detailed Rust debug output.
 mtrd check -v map.yaml
 mtrd check -vv map.yaml
+
+# Render the topology graph as SVG. These flag forms are equivalent.
+mtrd render -to map.svg map.yaml
+mtrd render -o map.svg -t map.yaml
+
+# Without -o, write ./mtrd-<microsecond timestamp>.svg.
+mtrd render --topology map.yaml
 ```

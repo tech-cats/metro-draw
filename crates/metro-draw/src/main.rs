@@ -1,9 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{ArgAction, Parser, Subcommand};
-use metro_draw::MetroMap;
+use metro_draw::{MetroMap, RenderError, render_topology_svg};
 use thiserror::Error;
 
 #[derive(Debug, Parser)]
@@ -31,6 +32,20 @@ enum Command {
         verbose: u8,
 
         /// Metro map file to check.
+        input: PathBuf,
+    },
+
+    /// Render a metro map as SVG.
+    Render {
+        /// Generate a topology graph.
+        #[arg(short = 't', long, required = true)]
+        topology: bool,
+
+        /// SVG destination (defaults to mtrd-<microsecond timestamp>.svg).
+        #[arg(short = 'o', long, value_name = "FILE")]
+        output: Option<PathBuf>,
+
+        /// Metro map file to render.
         input: PathBuf,
     },
 }
@@ -98,6 +113,12 @@ enum CliError {
     #[error("failed to serialize JSON: {0}")]
     SerializeJson(#[source] serde_json::Error),
 
+    #[error("failed to render topology: {0}")]
+    Render(#[from] RenderError),
+
+    #[error("failed to determine the current directory: {0}")]
+    CurrentDirectory(#[source] std::io::Error),
+
     #[error("verbosity may be specified at most twice")]
     ExcessiveVerbosity,
 }
@@ -122,7 +143,37 @@ fn run(cli: Cli) -> Result<String, CliError> {
             Ok(format!("{} -> {}", input.display(), output.display()))
         }
         Command::Check { input, verbose } => check(&input, verbose),
+        Command::Render {
+            topology: _,
+            output,
+            input,
+        } => render(&input, output.as_deref()),
     }
+}
+
+fn render(input: &Path, output: Option<&Path>) -> Result<String, CliError> {
+    let format = Format::from_path(input)?;
+    let map = read_map(input, format)?;
+    let svg = render_topology_svg(&map)?;
+    let output = match output {
+        Some(output) => output.to_path_buf(),
+        None => default_render_output()?,
+    };
+
+    fs::write(&output, svg).map_err(|source| CliError::Write {
+        path: output.clone(),
+        source,
+    })?;
+    Ok(output.display().to_string())
+}
+
+fn default_render_output() -> Result<PathBuf, CliError> {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros();
+    let directory = std::env::current_dir().map_err(CliError::CurrentDirectory)?;
+    Ok(directory.join(format!("mtrd-{timestamp}.svg")))
 }
 
 fn convert(input: &Path, output: &Path) -> Result<(), CliError> {
@@ -193,8 +244,6 @@ fn print_output(output: &str) {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
     use super::*;
 
     const YAML: &str = r#"
@@ -234,6 +283,36 @@ lines:
                 input
             } if input == Path::new("map.yaml")
         ));
+    }
+
+    #[test]
+    fn parses_render_flags_separately_or_combined() {
+        let combined =
+            Cli::try_parse_from(["mtrd", "render", "-to", "map.svg", "map.yaml"]).unwrap();
+        assert!(matches!(
+            combined.command,
+            Command::Render {
+                topology: true,
+                output: Some(output),
+                input,
+            } if output == Path::new("map.svg") && input == Path::new("map.yaml")
+        ));
+
+        let separate =
+            Cli::try_parse_from(["mtrd", "render", "-o", "map.svg", "-t", "map.yaml"]).unwrap();
+        assert!(matches!(
+            separate.command,
+            Command::Render {
+                topology: true,
+                output: Some(output),
+                input,
+            } if output == Path::new("map.svg") && input == Path::new("map.yaml")
+        ));
+    }
+
+    #[test]
+    fn topology_flag_is_required() {
+        assert!(Cli::try_parse_from(["mtrd", "render", "map.yaml"]).is_err());
     }
 
     #[test]
@@ -282,5 +361,24 @@ lines:
             Format::from_path(Path::new("map.txt")),
             Err(CliError::UnsupportedFormat(_))
         ));
+    }
+
+    #[test]
+    fn renders_svg_to_the_requested_file() {
+        let input = temporary_path("yaml");
+        let output = temporary_path("svg");
+        fs::write(&input, YAML).unwrap();
+
+        assert_eq!(
+            render(&input, Some(&output)).unwrap(),
+            output.display().to_string()
+        );
+        let svg = fs::read_to_string(&output).unwrap();
+        assert!(svg.contains("<svg"));
+        assert!(svg.contains("data-line-id=\"red\""));
+        assert!(svg.contains("data-station-id=\"central\""));
+
+        fs::remove_file(input).unwrap();
+        fs::remove_file(output).unwrap();
     }
 }
