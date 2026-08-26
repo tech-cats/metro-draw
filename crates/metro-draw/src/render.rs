@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use thiserror::Error;
@@ -15,14 +15,37 @@ const TAPER_LENGTH: f64 = 24.0;
 /// An error encountered while rendering a metro map.
 #[derive(Debug, Error, PartialEq)]
 pub enum RenderError {
+    #[error("station id must not be empty")]
+    EmptyStationId,
+
     #[error("station '{station}' has a non-finite position")]
     NonFinitePosition { station: String },
 
     #[error("station id '{station}' is defined more than once")]
     DuplicateStation { station: String },
 
+    #[error("line id must not be empty")]
+    EmptyLineId,
+
+    #[error("line id '{line}' is defined more than once")]
+    DuplicateLine { line: String },
+
     #[error("line '{line}' refers to unknown station '{station}'")]
     UnknownStation { line: String, station: String },
+
+    #[error("path {path} of line '{line}' must contain at least {minimum} stations")]
+    PathTooShort {
+        line: String,
+        path: usize,
+        minimum: usize,
+    },
+
+    #[error("path {path} of line '{line}' contains station '{station}' more than once")]
+    DuplicateStationInPath {
+        line: String,
+        path: usize,
+        station: String,
+    },
 
     #[error("station coordinates are too large to render")]
     CoordinateRange,
@@ -34,6 +57,7 @@ pub enum RenderError {
 /// `y` is rendered upwards. Each line path is drawn in its configured color;
 /// closed paths are joined back to their first station.
 pub fn render_topology_svg(map: &MetroMap) -> Result<String, RenderError> {
+    validate_topology(map)?;
     let stations = station_index(map)?;
     let segment_lanes = segment_lanes(map);
     let bounds = Bounds::from_map(map);
@@ -143,6 +167,63 @@ pub fn render_topology_svg(map: &MetroMap) -> Result<String, RenderError> {
     Ok(svg)
 }
 
+/// Validate all invariants required to render a topology graph.
+pub fn validate_topology(map: &MetroMap) -> Result<(), RenderError> {
+    let stations = station_index(map)?;
+    let mut line_ids = HashSet::with_capacity(map.lines.len());
+
+    for line in &map.lines {
+        if line.id.trim().is_empty() {
+            return Err(RenderError::EmptyLineId);
+        }
+        if !line_ids.insert(line.id.as_str()) {
+            return Err(RenderError::DuplicateLine {
+                line: line.id.clone(),
+            });
+        }
+
+        for (path_index, path) in line.paths.iter().enumerate() {
+            let minimum = if path.closed { 3 } else { 2 };
+            if path.stations.len() < minimum {
+                return Err(RenderError::PathTooShort {
+                    line: line.id.clone(),
+                    path: path_index + 1,
+                    minimum,
+                });
+            }
+
+            let mut path_stations = HashSet::with_capacity(path.stations.len());
+            for station in &path.stations {
+                if !stations.contains_key(station.as_str()) {
+                    return Err(RenderError::UnknownStation {
+                        line: line.id.clone(),
+                        station: station.clone(),
+                    });
+                }
+                if !path_stations.insert(station.as_str()) {
+                    return Err(RenderError::DuplicateStationInPath {
+                        line: line.id.clone(),
+                        path: path_index + 1,
+                        station: station.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    let bounds = Bounds::from_map(map);
+    let width = (bounds.max_x - bounds.min_x) * SCALE + PADDING * 2.0 + LABEL_SPACE;
+    let height = (bounds.max_y - bounds.min_y) * SCALE + PADDING * 2.0;
+    if !width.is_finite() || !height.is_finite() {
+        return Err(RenderError::CoordinateRange);
+    }
+    for station in &map.stations {
+        bounds.project(station)?;
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct SegmentKey<'a> {
     first: &'a str,
@@ -249,6 +330,9 @@ fn segment_path(
 fn station_index(map: &MetroMap) -> Result<HashMap<&str, &Station>, RenderError> {
     let mut stations = HashMap::with_capacity(map.stations.len());
     for station in &map.stations {
+        if station.id.trim().is_empty() {
+            return Err(RenderError::EmptyStationId);
+        }
         if !station.position.x.is_finite() || !station.position.y.is_finite() {
             return Err(RenderError::NonFinitePosition {
                 station: station.id.clone(),
@@ -361,7 +445,7 @@ mod tests {
                 color: "#f00".into(),
                 paths: vec![LinePath {
                     stations: vec!["south&west".into(), "north".into()],
-                    closed: true,
+                    closed: false,
                 }],
             }],
         }
@@ -461,6 +545,101 @@ mod tests {
             Err(RenderError::UnknownStation {
                 line: "red\"line".into(),
                 station: "missing".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn validates_ids_station_references_and_coordinates() {
+        let mut invalid = map();
+        invalid.stations[0].id.clear();
+        assert_eq!(
+            validate_topology(&invalid),
+            Err(RenderError::EmptyStationId)
+        );
+
+        let mut invalid = map();
+        invalid.stations[1].id = invalid.stations[0].id.clone();
+        assert_eq!(
+            validate_topology(&invalid),
+            Err(RenderError::DuplicateStation {
+                station: "south&west".into()
+            })
+        );
+
+        let mut invalid = map();
+        invalid.stations[0].position.x = f64::NAN;
+        assert_eq!(
+            validate_topology(&invalid),
+            Err(RenderError::NonFinitePosition {
+                station: "south&west".into()
+            })
+        );
+
+        let mut invalid = map();
+        invalid.stations[0].position.x = -f64::MAX;
+        invalid.stations[1].position.x = f64::MAX;
+        assert_eq!(
+            validate_topology(&invalid),
+            Err(RenderError::CoordinateRange)
+        );
+
+        let mut invalid = map();
+        invalid.lines[0].id.clear();
+        assert_eq!(validate_topology(&invalid), Err(RenderError::EmptyLineId));
+
+        let mut invalid = map();
+        invalid.lines.push(invalid.lines[0].clone());
+        assert_eq!(
+            validate_topology(&invalid),
+            Err(RenderError::DuplicateLine {
+                line: "red\"line".into()
+            })
+        );
+
+        let mut invalid = map();
+        invalid.lines[0].paths[0].stations[1] = "missing".into();
+        assert_eq!(
+            validate_topology(&invalid),
+            Err(RenderError::UnknownStation {
+                line: "red\"line".into(),
+                station: "missing".into()
+            })
+        );
+    }
+
+    #[test]
+    fn validates_path_lengths_and_repeated_stations() {
+        let mut invalid = map();
+        invalid.lines[0].paths[0].stations.pop();
+        assert_eq!(
+            validate_topology(&invalid),
+            Err(RenderError::PathTooShort {
+                line: "red\"line".into(),
+                path: 1,
+                minimum: 2,
+            })
+        );
+
+        let mut invalid = map();
+        invalid.lines[0].paths[0].closed = true;
+        assert_eq!(
+            validate_topology(&invalid),
+            Err(RenderError::PathTooShort {
+                line: "red\"line".into(),
+                path: 1,
+                minimum: 3,
+            })
+        );
+
+        let mut invalid = map();
+        invalid.lines[0].paths[0].stations.push("south&west".into());
+        assert_eq!(
+            validate_topology(&invalid),
+            Err(RenderError::DuplicateStationInPath {
+                line: "red\"line".into(),
+                path: 1,
+                station: "south&west".into(),
             })
         );
     }

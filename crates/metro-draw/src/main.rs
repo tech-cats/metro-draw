@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{ArgAction, Parser, Subcommand};
-use metro_draw::{MetroMap, RenderError, render_topology_svg};
+use metro_draw::{MetroMap, RenderError, render_topology_svg, validate_topology};
 use thiserror::Error;
 
 #[derive(Debug, Parser)]
@@ -120,6 +120,9 @@ enum CliError {
     #[error("failed to render topology: {0}")]
     Render(#[from] RenderError),
 
+    #[error("invalid metro map: {0}")]
+    InvalidMap(RenderError),
+
     #[error("failed to determine the current directory: {0}")]
     CurrentDirectory(#[source] std::io::Error),
 
@@ -216,6 +219,7 @@ fn convert(input: &Path, output: &Path) -> Result<(), CliError> {
 fn check(input: &Path, verbose: u8) -> Result<String, CliError> {
     let format = Format::from_path(input)?;
     let map = read_map(input, format)?;
+    validate_topology(&map).map_err(CliError::InvalidMap)?;
 
     match verbose {
         0 => Ok(format!("{}: valid", input.display())),
@@ -268,6 +272,11 @@ stations:
       en:
         - Central
     position: [1.0, 2.0]
+  - id: harbour
+    names:
+      en:
+        - Harbour
+    position: [3.0, 4.0]
 lines:
   - id: red
     names:
@@ -275,7 +284,7 @@ lines:
         - Red Line
     color: '#ff0000'
     paths:
-      - stations: [central]
+      - stations: [central, harbour]
         closed: false
 "#;
 
@@ -408,6 +417,21 @@ lines:
         assert!(check(&path, 1).unwrap().starts_with("stations:"));
         assert!(check(&path, 2).unwrap().starts_with("MetroMap {"));
         assert!(matches!(check(&path, 3), Err(CliError::ExcessiveVerbosity)));
+
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn check_rejects_maps_that_cannot_render() {
+        let path = temporary_path("yaml");
+        let yaml = YAML.replace("[central, harbour]", "[central, missing]");
+        fs::write(&path, yaml).unwrap();
+
+        assert!(matches!(
+            check(&path, 0),
+            Err(CliError::InvalidMap(RenderError::UnknownStation { line, station }))
+                if line == "red" && station == "missing"
+        ));
 
         fs::remove_file(path).unwrap();
     }

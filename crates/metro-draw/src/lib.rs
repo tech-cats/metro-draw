@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-pub use render::{RenderError, render_topology_svg};
+pub use render::{RenderError, render_topology_svg, validate_topology};
 
 /// Names indexed by a locale such as `en` or `zh-CN`.
 ///
