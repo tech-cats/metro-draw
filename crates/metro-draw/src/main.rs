@@ -4,11 +4,11 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{ArgAction, Parser, Subcommand};
-use metro_draw::{MetroMap, RenderError, render_topology_svg, validate_topology};
+use metro_draw::{MetroTopology, TopologyRenderError, render_topology_svg, validate_topology};
 use thiserror::Error;
 
 #[derive(Debug, Parser)]
-#[command(name = "mtrd", version, about = "Work with metro map manifests")]
+#[command(name = "mtrd", version, about = "Work with metro topology manifests")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -16,7 +16,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Convert a metro map between YAML and JSON.
+    /// Convert a metro topology between YAML and JSON.
     Convert {
         /// Source .yaml, .yml, or .json file.
         input: PathBuf,
@@ -25,17 +25,17 @@ enum Command {
         output: PathBuf,
     },
 
-    /// Check whether a metro map has valid syntax and schema.
+    /// Check whether a metro topology has valid syntax and schema.
     Check {
         /// Print canonical YAML (-v) or detailed debug output (-vv).
         #[arg(short = 'v', action = ArgAction::Count)]
         verbose: u8,
 
-        /// Metro map file to check.
+        /// Metro topology file to check.
         input: PathBuf,
     },
 
-    /// Render a metro map as SVG.
+    /// Render a metro topology as SVG.
     Render {
         /// Generate a topology graph.
         #[arg(short = 't', long, required = true)]
@@ -49,7 +49,7 @@ enum Command {
         #[arg(short = 'T', long, conflicts_with = "output")]
         timestamp: bool,
 
-        /// Metro map file to render.
+        /// Metro topology file to render.
         input: PathBuf,
     },
 }
@@ -118,10 +118,10 @@ enum CliError {
     SerializeJson(#[source] serde_json::Error),
 
     #[error("failed to render topology: {0}")]
-    Render(#[from] RenderError),
+    RenderTopology(#[from] TopologyRenderError),
 
-    #[error("invalid metro map: {0}")]
-    InvalidMap(RenderError),
+    #[error("invalid metro topology: {0}")]
+    InvalidTopology(TopologyRenderError),
 
     #[error("failed to determine the current directory: {0}")]
     CurrentDirectory(#[source] std::io::Error),
@@ -155,14 +155,18 @@ fn run(cli: Cli) -> Result<String, CliError> {
             output,
             timestamp,
             input,
-        } => render(&input, output.as_deref(), timestamp),
+        } => render_topology(&input, output.as_deref(), timestamp),
     }
 }
 
-fn render(input: &Path, output: Option<&Path>, timestamp: bool) -> Result<String, CliError> {
+fn render_topology(
+    input: &Path,
+    output: Option<&Path>,
+    timestamp: bool,
+) -> Result<String, CliError> {
     let format = Format::from_path(input)?;
-    let map = read_map(input, format)?;
-    let svg = render_topology_svg(&map)?;
+    let topology = read_topology(input, format)?;
+    let svg = render_topology_svg(&topology)?;
     let output = render_output_path(input, output, timestamp)?;
 
     fs::write(&output, svg).map_err(|source| CliError::Write {
@@ -204,8 +208,8 @@ fn convert(input: &Path, output: &Path) -> Result<(), CliError> {
         }));
     }
 
-    let map = read_map(input, input_format)?;
-    let mut encoded = serialize_map(&map, output_format)?;
+    let topology = read_topology(input, input_format)?;
+    let mut encoded = serialize_topology(&topology, output_format)?;
     if !encoded.ends_with('\n') {
         encoded.push('\n');
     }
@@ -218,39 +222,39 @@ fn convert(input: &Path, output: &Path) -> Result<(), CliError> {
 
 fn check(input: &Path, verbose: u8) -> Result<String, CliError> {
     let format = Format::from_path(input)?;
-    let map = read_map(input, format)?;
-    validate_topology(&map).map_err(CliError::InvalidMap)?;
+    let topology = read_topology(input, format)?;
+    validate_topology(&topology).map_err(CliError::InvalidTopology)?;
 
     match verbose {
         0 => Ok(format!("{}: valid", input.display())),
-        1 => map.to_yaml().map_err(CliError::SerializeYaml),
-        2 => Ok(format!("{map:#?}")),
+        1 => topology.to_yaml().map_err(CliError::SerializeYaml),
+        2 => Ok(format!("{topology:#?}")),
         _ => Err(CliError::ExcessiveVerbosity),
     }
 }
 
-fn read_map(path: &Path, format: Format) -> Result<MetroMap, CliError> {
+fn read_topology(path: &Path, format: Format) -> Result<MetroTopology, CliError> {
     let contents = fs::read_to_string(path).map_err(|source| CliError::Read {
         path: path.to_path_buf(),
         source,
     })?;
 
     match format {
-        Format::Yaml => MetroMap::from_yaml(&contents).map_err(|source| CliError::ParseYaml {
+        Format::Yaml => MetroTopology::from_yaml(&contents).map_err(|source| CliError::ParseYaml {
             path: path.to_path_buf(),
             source,
         }),
-        Format::Json => MetroMap::from_json(&contents).map_err(|source| CliError::ParseJson {
+        Format::Json => MetroTopology::from_json(&contents).map_err(|source| CliError::ParseJson {
             path: path.to_path_buf(),
             source,
         }),
     }
 }
 
-fn serialize_map(map: &MetroMap, format: Format) -> Result<String, CliError> {
+fn serialize_topology(topology: &MetroTopology, format: Format) -> Result<String, CliError> {
     match format {
-        Format::Yaml => map.to_yaml().map_err(CliError::SerializeYaml),
-        Format::Json => map.to_json().map_err(CliError::SerializeJson),
+        Format::Yaml => topology.to_yaml().map_err(CliError::SerializeYaml),
+        Format::Json => topology.to_json().map_err(CliError::SerializeJson),
     }
 }
 
@@ -298,21 +302,22 @@ lines:
 
     #[test]
     fn parses_cli_contract() {
-        let cli = Cli::try_parse_from(["mtrd", "check", "-vv", "map.yaml"]).unwrap();
+        let cli = Cli::try_parse_from(["mtrd", "check", "-vv", "topology.yaml"]).unwrap();
 
         assert!(matches!(
             cli.command,
             Command::Check {
                 verbose: 2,
                 input
-            } if input == Path::new("map.yaml")
+            } if input == Path::new("topology.yaml")
         ));
     }
 
     #[test]
     fn parses_render_flags_separately_or_combined() {
         let combined =
-            Cli::try_parse_from(["mtrd", "render", "-to", "map.svg", "map.yaml"]).unwrap();
+            Cli::try_parse_from(["mtrd", "render", "-to", "topology.svg", "topology.yaml"])
+                .unwrap();
         assert!(matches!(
             combined.command,
             Command::Render {
@@ -320,11 +325,18 @@ lines:
                 output: Some(output),
                 timestamp: false,
                 input,
-            } if output == Path::new("map.svg") && input == Path::new("map.yaml")
+            } if output == Path::new("topology.svg") && input == Path::new("topology.yaml")
         ));
 
-        let separate =
-            Cli::try_parse_from(["mtrd", "render", "-o", "map.svg", "-t", "map.yaml"]).unwrap();
+        let separate = Cli::try_parse_from([
+            "mtrd",
+            "render",
+            "-o",
+            "topology.svg",
+            "-t",
+            "topology.yaml",
+        ])
+        .unwrap();
         assert!(matches!(
             separate.command,
             Command::Render {
@@ -332,10 +344,10 @@ lines:
                 output: Some(output),
                 timestamp: false,
                 input,
-            } if output == Path::new("map.svg") && input == Path::new("map.yaml")
+            } if output == Path::new("topology.svg") && input == Path::new("topology.yaml")
         ));
 
-        let timestamped = Cli::try_parse_from(["mtrd", "render", "-tT", "map.yaml"]).unwrap();
+        let timestamped = Cli::try_parse_from(["mtrd", "render", "-tT", "topology.yaml"]).unwrap();
         assert!(matches!(
             timestamped.command,
             Command::Render {
@@ -343,19 +355,27 @@ lines:
                 output: None,
                 timestamp: true,
                 input,
-            } if input == Path::new("map.yaml")
+            } if input == Path::new("topology.yaml")
         ));
     }
 
     #[test]
     fn topology_flag_is_required() {
-        assert!(Cli::try_parse_from(["mtrd", "render", "map.yaml"]).is_err());
+        assert!(Cli::try_parse_from(["mtrd", "render", "topology.yaml"]).is_err());
     }
 
     #[test]
     fn timestamp_and_explicit_output_conflict() {
         assert!(
-            Cli::try_parse_from(["mtrd", "render", "-tT", "-o", "map.svg", "map.yaml"]).is_err()
+            Cli::try_parse_from([
+                "mtrd",
+                "render",
+                "-tT",
+                "-o",
+                "topology.svg",
+                "topology.yaml"
+            ])
+            .is_err()
         );
     }
 
@@ -368,8 +388,8 @@ lines:
             Path::new("examples/simple.yaml.svg")
         );
         assert_eq!(
-            render_output_path(input, Some(Path::new("map.svg")), false).unwrap(),
-            Path::new("map.svg")
+            render_output_path(input, Some(Path::new("topology.svg")), false).unwrap(),
+            Path::new("topology.svg")
         );
 
         let timestamped = render_output_path(input, None, true).unwrap();
@@ -395,7 +415,7 @@ lines:
         convert(&yaml_path, &json_path).unwrap();
         let json = fs::read_to_string(&json_path).unwrap();
         assert_eq!(
-            MetroMap::from_json(&json).unwrap().stations[0].id,
+            MetroTopology::from_json(&json).unwrap().stations[0].id,
             "central"
         );
 
@@ -415,21 +435,23 @@ lines:
 
         assert!(check(&path, 0).unwrap().ends_with(": valid"));
         assert!(check(&path, 1).unwrap().starts_with("stations:"));
-        assert!(check(&path, 2).unwrap().starts_with("MetroMap {"));
+        assert!(check(&path, 2).unwrap().starts_with("MetroTopology {"));
         assert!(matches!(check(&path, 3), Err(CliError::ExcessiveVerbosity)));
 
         fs::remove_file(path).unwrap();
     }
 
     #[test]
-    fn check_rejects_maps_that_cannot_render() {
+    fn check_rejects_topologies_that_cannot_render() {
         let path = temporary_path("yaml");
         let yaml = YAML.replace("[central, harbour]", "[central, missing]");
         fs::write(&path, yaml).unwrap();
 
         assert!(matches!(
             check(&path, 0),
-            Err(CliError::InvalidMap(RenderError::UnknownStation { line, station }))
+            Err(CliError::InvalidTopology(
+                TopologyRenderError::UnknownStation { line, station }
+            ))
                 if line == "red" && station == "missing"
         ));
 
@@ -439,11 +461,11 @@ lines:
     #[test]
     fn rejects_same_or_unknown_formats() {
         assert!(matches!(
-            convert(Path::new("map.yaml"), Path::new("copy.yml")),
+            convert(Path::new("topology.yaml"), Path::new("copy.yml")),
             Err(CliError::SameFormat("YAML"))
         ));
         assert!(matches!(
-            Format::from_path(Path::new("map.txt")),
+            Format::from_path(Path::new("topology.txt")),
             Err(CliError::UnsupportedFormat(_))
         ));
     }
@@ -455,7 +477,7 @@ lines:
         fs::write(&input, YAML).unwrap();
 
         assert_eq!(
-            render(&input, Some(&output), false).unwrap(),
+            render_topology(&input, Some(&output), false).unwrap(),
             output.display().to_string()
         );
         let svg = fs::read_to_string(&output).unwrap();
@@ -476,7 +498,7 @@ lines:
         fs::write(&input, YAML).unwrap();
 
         assert_eq!(
-            render(&input, None, false).unwrap(),
+            render_topology(&input, None, false).unwrap(),
             expected.display().to_string()
         );
         assert!(fs::read_to_string(&expected).unwrap().contains("<svg"));
