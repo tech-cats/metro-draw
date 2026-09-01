@@ -1,7 +1,7 @@
 # Metro Draw
 
-`mtrd` works with metro topology manifests. YAML is the primary human-editable
-format, while JSON uses the same schema for WebUI interchange.
+`mtrd` works with metro topology and schematic manifests. YAML is the primary
+human-editable format, while JSON uses the same schemas for WebUI interchange.
 
 ## Commands
 
@@ -10,12 +10,15 @@ format, while JSON uses the same schema for WebUI interchange.
 mtrd convert map.yaml map.json
 mtrd convert map.json map.yaml
 
-# Check syntax, schema, and topology renderability.
-mtrd check map.yaml
+# Check topology syntax, schema, and renderability.
+mtrd check -t topology.yaml
 
-# Print the parsed map as canonical YAML, or as detailed Rust debug output.
-mtrd check -v map.yaml
-mtrd check -vv map.yaml
+# Check a schematic manifest's syntax and schema.
+mtrd check -s schematic.yaml
+
+# The long manifest-kind flags and verbosity modes are also supported.
+mtrd check --topology -v topology.yaml
+mtrd check --schematic -vv schematic.yaml
 
 # Render the topology graph as SVG. These flag forms are equivalent.
 mtrd render -to map.svg map.yaml
@@ -28,8 +31,10 @@ mtrd render --topology map.yaml
 mtrd render -tT map.yaml
 ```
 
-`check` accepts `.yaml`, `.yml`, and `.json` inputs. A successful check means
-the manifest can be processed by the topology renderer. It validates that:
+`check` requires exactly one of `-t`/`--topology` or `-s`/`--schematic` and
+accepts `.yaml`, `.yml`, and `.json` inputs. For a topology manifest, a
+successful check means the manifest can be processed by the topology renderer.
+It validates that:
 
 - station and line IDs are non-empty and unique;
 - every station referenced by a line path exists;
@@ -42,6 +47,11 @@ the manifest can be processed by the topology renderer. It validates that:
 These checks concern the manifest itself. Rendering can still fail because of
 an output filesystem error, such as an unwritable destination.
 
+For a schematic manifest, a successful check means it satisfies the strict
+`SchematicManifest` YAML/JSON schema, including finite positions, finite
+positive lengths, and rejection of unknown fields. Schematic rendering is not
+yet implemented.
+
 With `check -v`, `mtrd` prints the parsed map as canonical YAML after it passes
 validation. With `check -vv`, it prints the detailed Rust debug representation.
 
@@ -53,6 +63,6 @@ supports strict YAML and equivalent JSON serialisation through `from_yaml`,
 `to_yaml`, `from_json`, and `to_json`. Schematic positions are `[x, y]` arrays,
 lengths are finite positive scalars, and unknown fields are rejected.
 
-This schema is not yet accepted by the `mtrd` commands and does not yet have a
-schematic renderer. [`examples/shekou.yaml`](examples/shekou.yaml) is a
-representative semantic manifest.
+This schema is accepted by `mtrd check -s` but does not yet have a schematic
+renderer. [`examples/shekou.yaml`](examples/shekou.yaml) is a representative
+semantic manifest.

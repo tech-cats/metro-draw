@@ -4,11 +4,13 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{ArgAction, Parser, Subcommand};
-use metro_draw::{MetroTopology, TopologyRenderError, render_topology_svg, validate_topology};
+use metro_draw::{
+    MetroTopology, SchematicManifest, TopologyRenderError, render_topology_svg, validate_topology,
+};
 use thiserror::Error;
 
 #[derive(Debug, Parser)]
-#[command(name = "mtrd", version, about = "Work with metro topology manifests")]
+#[command(name = "mtrd", version, about = "Work with metro manifests")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -25,13 +27,31 @@ enum Command {
         output: PathBuf,
     },
 
-    /// Check whether a metro topology has valid syntax and schema.
+    /// Check whether a metro manifest has valid syntax and schema.
     Check {
         /// Print canonical YAML (-v) or detailed debug output (-vv).
         #[arg(short = 'v', action = ArgAction::Count)]
         verbose: u8,
 
-        /// Metro topology file to check.
+        /// Check a topology manifest.
+        #[arg(
+            short = 't',
+            long,
+            required_unless_present = "schematic",
+            conflicts_with = "schematic"
+        )]
+        topology: bool,
+
+        /// Check a schematic manifest.
+        #[arg(
+            short = 's',
+            long,
+            required_unless_present = "topology",
+            conflicts_with = "topology"
+        )]
+        schematic: bool,
+
+        /// Metro manifest file to check.
         input: PathBuf,
     },
 
@@ -58,6 +78,12 @@ enum Command {
 enum Format {
     Yaml,
     Json,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ManifestKind {
+    Topology,
+    Schematic,
 }
 
 impl Format {
@@ -149,7 +175,21 @@ fn run(cli: Cli) -> Result<String, CliError> {
             convert(&input, &output)?;
             Ok(format!("{} -> {}", input.display(), output.display()))
         }
-        Command::Check { input, verbose } => check(&input, verbose),
+        Command::Check {
+            input,
+            verbose,
+            topology,
+            schematic,
+        } => {
+            let kind = if topology {
+                debug_assert!(!schematic);
+                ManifestKind::Topology
+            } else {
+                debug_assert!(schematic);
+                ManifestKind::Schematic
+            };
+            check(&input, verbose, kind)
+        }
         Command::Render {
             topology: _,
             output,
@@ -220,16 +260,31 @@ fn convert(input: &Path, output: &Path) -> Result<(), CliError> {
     })
 }
 
-fn check(input: &Path, verbose: u8) -> Result<String, CliError> {
+fn check(input: &Path, verbose: u8, kind: ManifestKind) -> Result<String, CliError> {
     let format = Format::from_path(input)?;
-    let topology = read_topology(input, format)?;
-    validate_topology(&topology).map_err(CliError::InvalidTopology)?;
 
-    match verbose {
-        0 => Ok(format!("{}: valid", input.display())),
-        1 => topology.to_yaml().map_err(CliError::SerializeYaml),
-        2 => Ok(format!("{topology:#?}")),
-        _ => Err(CliError::ExcessiveVerbosity),
+    match kind {
+        ManifestKind::Topology => {
+            let topology = read_topology(input, format)?;
+            validate_topology(&topology).map_err(CliError::InvalidTopology)?;
+
+            match verbose {
+                0 => Ok(format!("{}: valid", input.display())),
+                1 => topology.to_yaml().map_err(CliError::SerializeYaml),
+                2 => Ok(format!("{topology:#?}")),
+                _ => Err(CliError::ExcessiveVerbosity),
+            }
+        }
+        ManifestKind::Schematic => {
+            let schematic = read_schematic(input, format)?;
+
+            match verbose {
+                0 => Ok(format!("{}: valid", input.display())),
+                1 => schematic.to_yaml().map_err(CliError::SerializeYaml),
+                2 => Ok(format!("{schematic:#?}")),
+                _ => Err(CliError::ExcessiveVerbosity),
+            }
+        }
     }
 }
 
@@ -248,6 +303,28 @@ fn read_topology(path: &Path, format: Format) -> Result<MetroTopology, CliError>
             path: path.to_path_buf(),
             source,
         }),
+    }
+}
+
+fn read_schematic(path: &Path, format: Format) -> Result<SchematicManifest, CliError> {
+    let contents = fs::read_to_string(path).map_err(|source| CliError::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+
+    match format {
+        Format::Yaml => {
+            SchematicManifest::from_yaml(&contents).map_err(|source| CliError::ParseYaml {
+                path: path.to_path_buf(),
+                source,
+            })
+        }
+        Format::Json => {
+            SchematicManifest::from_json(&contents).map_err(|source| CliError::ParseJson {
+                path: path.to_path_buf(),
+                source,
+            })
+        }
     }
 }
 
@@ -292,6 +369,28 @@ lines:
         closed: false
 "#;
 
+    const SCHEMATIC_YAML: &str = r##"
+options:
+  line_width: 8.0
+  station_diameter: 18.0
+stations:
+  - id: central
+    position: [1.0, 2.0]
+    names:
+      en:
+        - Central
+    symbol:
+      type: circle
+corners: []
+lines:
+  - id: red
+    names:
+      en:
+        - Red Line
+    color: "#ff0000"
+    paths: []
+"##;
+
     fn temporary_path(extension: &str) -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -302,15 +401,34 @@ lines:
 
     #[test]
     fn parses_cli_contract() {
-        let cli = Cli::try_parse_from(["mtrd", "check", "-vv", "topology.yaml"]).unwrap();
+        let cli = Cli::try_parse_from(["mtrd", "check", "-tvv", "topology.yaml"]).unwrap();
 
         assert!(matches!(
             cli.command,
             Command::Check {
                 verbose: 2,
+                topology: true,
+                schematic: false,
                 input
             } if input == Path::new("topology.yaml")
         ));
+
+        let cli = Cli::try_parse_from(["mtrd", "check", "--schematic", "schematic.yaml"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Check {
+                verbose: 0,
+                topology: false,
+                schematic: true,
+                input
+            } if input == Path::new("schematic.yaml")
+        ));
+    }
+
+    #[test]
+    fn check_requires_exactly_one_manifest_kind() {
+        assert!(Cli::try_parse_from(["mtrd", "check", "map.yaml"]).is_err());
+        assert!(Cli::try_parse_from(["mtrd", "check", "-ts", "map.yaml"]).is_err());
     }
 
     #[test]
@@ -433,10 +551,67 @@ lines:
         let path = temporary_path("yaml");
         fs::write(&path, YAML).unwrap();
 
-        assert!(check(&path, 0).unwrap().ends_with(": valid"));
-        assert!(check(&path, 1).unwrap().starts_with("stations:"));
-        assert!(check(&path, 2).unwrap().starts_with("MetroTopology {"));
-        assert!(matches!(check(&path, 3), Err(CliError::ExcessiveVerbosity)));
+        assert!(
+            check(&path, 0, ManifestKind::Topology)
+                .unwrap()
+                .ends_with(": valid")
+        );
+        assert!(
+            check(&path, 1, ManifestKind::Topology)
+                .unwrap()
+                .starts_with("stations:")
+        );
+        assert!(
+            check(&path, 2, ManifestKind::Topology)
+                .unwrap()
+                .starts_with("MetroTopology {")
+        );
+        assert!(matches!(
+            check(&path, 3, ManifestKind::Topology),
+            Err(CliError::ExcessiveVerbosity)
+        ));
+
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn checks_schematic_yaml_and_json_with_verbosity() {
+        let yaml_path = temporary_path("yaml");
+        let json_path = temporary_path("json");
+        fs::write(&yaml_path, SCHEMATIC_YAML).unwrap();
+        let schematic = SchematicManifest::from_yaml(SCHEMATIC_YAML).unwrap();
+        fs::write(&json_path, schematic.to_json().unwrap()).unwrap();
+
+        assert!(
+            check(&yaml_path, 0, ManifestKind::Schematic)
+                .unwrap()
+                .ends_with(": valid")
+        );
+        assert!(
+            check(&yaml_path, 1, ManifestKind::Schematic)
+                .unwrap()
+                .starts_with("options:")
+        );
+        assert!(
+            check(&json_path, 2, ManifestKind::Schematic)
+                .unwrap()
+                .starts_with("SchematicManifest {")
+        );
+
+        fs::remove_file(yaml_path).unwrap();
+        fs::remove_file(json_path).unwrap();
+    }
+
+    #[test]
+    fn schematic_check_rejects_unknown_fields() {
+        let path = temporary_path("yaml");
+        let yaml = SCHEMATIC_YAML.replace("  line_width: 8.0", "  line_width: 8.0\n  extra: true");
+        fs::write(&path, yaml).unwrap();
+
+        assert!(matches!(
+            check(&path, 0, ManifestKind::Schematic),
+            Err(CliError::ParseYaml { .. })
+        ));
 
         fs::remove_file(path).unwrap();
     }
@@ -448,7 +623,7 @@ lines:
         fs::write(&path, yaml).unwrap();
 
         assert!(matches!(
-            check(&path, 0),
+            check(&path, 0, ManifestKind::Topology),
             Err(CliError::InvalidTopology(
                 TopologyRenderError::UnknownStation { line, station }
             ))
