@@ -44,3 +44,15 @@ an output filesystem error, such as an unwritable destination.
 
 With `check -v`, `mtrd` prints the parsed map as canonical YAML after it passes
 validation. With `check -vv`, it prints the detailed Rust debug representation.
+
+## Schematic manifest library API
+
+The library also defines the semantic schematic-map schema documented in
+[`docs/schematic-map/v4.md`](docs/schematic-map/v4.md). `SchematicManifest`
+supports strict YAML and equivalent JSON serialisation through `from_yaml`,
+`to_yaml`, `from_json`, and `to_json`. Schematic positions are `[x, y]` arrays,
+lengths are finite positive scalars, and unknown fields are rejected.
+
+This schema is not yet accepted by the `mtrd` commands and does not yet have a
+schematic renderer. [`examples/shekou.yaml`](examples/shekou.yaml) is a
+representative semantic manifest.
