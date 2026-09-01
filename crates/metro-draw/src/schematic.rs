@@ -12,12 +12,96 @@ pub struct SchematicManifest {
     pub lines: Vec<SchematicLine>,
 }
 
-/// Global dimensions used by a schematic map.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+/// Global visual options used by a schematic map.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SchematicOptions {
-    pub line_width: SchematicLength,
-    pub station_diameter: SchematicLength,
+    pub lines: SchematicLineOptions,
+    pub stations: SchematicStationOptions,
+}
+
+/// Global styling shared by all metro lines.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SchematicLineOptions {
+    pub width: SchematicLength,
+}
+
+/// Global styling for common and interchange stations.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SchematicStationOptions {
+    pub common: SchematicCommonStationOptions,
+    pub interchange: SchematicInterchangeStationOptions,
+}
+
+/// Styling shared by circle-shaped common stations.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SchematicCommonStationOptions {
+    pub fill: SchematicCommonStationFill,
+    pub stroke: SchematicCommonStationStroke,
+}
+
+/// Fill styling for circle-shaped common stations.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SchematicCommonStationFill {
+    pub diameter: SchematicLength,
+    pub color: SchematicStationColor,
+}
+
+/// Stroke styling for circle-shaped common stations.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SchematicCommonStationStroke {
+    pub width: SchematicLength,
+    pub alignment: SchematicStrokeAlignment,
+    pub color: SchematicStationColor,
+}
+
+/// Styling shared by capsule-shaped interchange stations.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SchematicInterchangeStationOptions {
+    pub fill: SchematicInterchangeStationFill,
+    pub stroke: SchematicInterchangeStationStroke,
+}
+
+/// Fill styling for capsule-shaped interchange stations.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SchematicInterchangeStationFill {
+    pub width: SchematicLength,
+    pub color: String,
+}
+
+/// Stroke styling for capsule-shaped interchange stations.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SchematicInterchangeStationStroke {
+    pub width: SchematicLength,
+    pub alignment: SchematicStrokeAlignment,
+    pub color: String,
+}
+
+/// How a common-station colour is selected.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum SchematicStationColor {
+    Unified { value: String },
+    // The empty struct makes `deny_unknown_fields` apply to this fieldless case.
+    FollowLine {},
+}
+
+/// Placement of a station stroke relative to its fill boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SchematicStrokeAlignment {
+    Inside,
+    #[serde(alias = "centre")]
+    Center,
+    Outside,
 }
 
 /// A station and its requested schematic symbol.
@@ -240,8 +324,28 @@ mod tests {
 
     const SCHEMATIC_YAML: &str = r##"
 options:
-  line_width: 8.0
-  station_diameter: 18.0
+  lines:
+    width: 8.0
+  stations:
+    common:
+      fill:
+        diameter: 18.0
+        color:
+          type: unified
+          value: "#ffffff"
+      stroke:
+        width: 2.0
+        alignment: centre
+        color:
+          type: follow-line
+    interchange:
+      fill:
+        width: 18.0
+        color: "#ffffff"
+      stroke:
+        width: 2.0
+        alignment: outside
+        color: "#000000"
 
 stations:
   - id: west
@@ -295,7 +399,11 @@ lines:
     fn deserializes_schematic_station_ports() {
         let schematic = SchematicManifest::from_yaml(SCHEMATIC_YAML).unwrap();
 
-        assert_eq!(schematic.options.line_width.get(), 8.0);
+        assert_eq!(schematic.options.lines.width.get(), 8.0);
+        assert_eq!(
+            schematic.options.stations.common.stroke.alignment,
+            SchematicStrokeAlignment::Center
+        );
         assert_eq!(schematic.stations[0].position.x(), 0.0);
         assert_eq!(schematic.stations[0].position.y(), 40.0);
         assert_eq!(
@@ -318,6 +426,8 @@ lines:
 
         assert_eq!(decoded, schematic);
         assert!(encoded.contains("position: [0.0, 40.0]"));
+        assert!(encoded.contains("alignment: center"));
+        assert!(!encoded.contains("alignment: centre"));
         assert_eq!(
             value["lines"][0]["paths"][0]["visits"][2]["port"]["interchange"]["type"],
             "single_perpendicular"
@@ -353,7 +463,7 @@ lines:
     fn rejects_invalid_schematic_scalars() {
         let non_finite_point =
             SCHEMATIC_YAML.replace("position: [0.0, 40.0]", "position: [.nan, 40.0]");
-        let zero_length = SCHEMATIC_YAML.replace("line_width: 8.0", "line_width: 0.0");
+        let zero_length = SCHEMATIC_YAML.replace("    width: 8.0", "    width: 0.0");
 
         assert!(SchematicManifest::from_yaml(&non_finite_point).is_err());
         assert!(SchematicManifest::from_yaml(&zero_length).is_err());
@@ -377,9 +487,19 @@ lines:
             "              type: single_line",
             "              type: single_line\n              index: 0",
         );
+        let invalid_color = SCHEMATIC_YAML.replace(
+            "          type: follow-line",
+            "          type: follow-line\n          value: \"#ffffff\"",
+        );
+        let obsolete_flat_option = SCHEMATIC_YAML.replace(
+            "  lines:\n    width: 8.0",
+            "  line_width: 8.0\n  lines:\n    width: 8.0",
+        );
 
         assert!(SchematicManifest::from_yaml(&invalid_port).is_err());
         assert!(SchematicManifest::from_yaml(&invalid_circle).is_err());
         assert!(SchematicManifest::from_yaml(&invalid_single_line).is_err());
+        assert!(SchematicManifest::from_yaml(&invalid_color).is_err());
+        assert!(SchematicManifest::from_yaml(&obsolete_flat_option).is_err());
     }
 }

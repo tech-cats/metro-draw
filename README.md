@@ -63,6 +63,12 @@ supports strict YAML and equivalent JSON serialisation through `from_yaml`,
 `to_yaml`, `from_json`, and `to_json`. Schematic positions are `[x, y]` arrays,
 lengths are finite positive scalars, and unknown fields are rejected.
 
+Global `options` group line styling under `lines` and station styling under
+`stations.common` and `stations.interchange`. Common-station colours support
+the tagged `unified` and `follow-line` policies. Station stroke alignment is
+`inside`, `center`, or `outside`; `centre` is accepted on input and serialised
+canonically as `center`.
+
 This schema is accepted by `mtrd check -s` but does not yet have a schematic
-renderer. [`examples/shekou.yaml`](examples/shekou.yaml) is a representative
-semantic manifest.
+renderer. [`examples/schematic.yaml`](examples/schematic.yaml) is a
+representative semantic manifest.

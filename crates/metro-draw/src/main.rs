@@ -371,8 +371,28 @@ lines:
 
     const SCHEMATIC_YAML: &str = r##"
 options:
-  line_width: 8.0
-  station_diameter: 18.0
+  lines:
+    width: 8.0
+  stations:
+    common:
+      fill:
+        diameter: 18.0
+        color:
+          type: unified
+          value: "#ffffff"
+      stroke:
+        width: 2.0
+        alignment: center
+        color:
+          type: follow-line
+    interchange:
+      fill:
+        width: 18.0
+        color: "#ffffff"
+      stroke:
+        width: 2.0
+        alignment: outside
+        color: "#000000"
 stations:
   - id: central
     position: [1.0, 2.0]
@@ -605,7 +625,7 @@ lines:
     #[test]
     fn schematic_check_rejects_unknown_fields() {
         let path = temporary_path("yaml");
-        let yaml = SCHEMATIC_YAML.replace("  line_width: 8.0", "  line_width: 8.0\n  extra: true");
+        let yaml = SCHEMATIC_YAML.replace("    width: 8.0", "    width: 8.0\n    extra: true");
         fs::write(&path, yaml).unwrap();
 
         assert!(matches!(

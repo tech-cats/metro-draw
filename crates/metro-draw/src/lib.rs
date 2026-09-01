@@ -16,9 +16,13 @@ mod topology_validation;
 use std::collections::BTreeMap;
 
 pub use schematic::{
-    OctilinearAxis, SchematicCorner, SchematicInterchangePort, SchematicLength, SchematicLine,
+    OctilinearAxis, SchematicCommonStationFill, SchematicCommonStationOptions,
+    SchematicCommonStationStroke, SchematicCorner, SchematicInterchangePort,
+    SchematicInterchangeStationFill, SchematicInterchangeStationOptions,
+    SchematicInterchangeStationStroke, SchematicLength, SchematicLine, SchematicLineOptions,
     SchematicManifest, SchematicOptions, SchematicPath, SchematicPoint, SchematicRouteVisit,
-    SchematicStation, SchematicStationPort, SchematicStationSymbol, SchematicValueError,
+    SchematicStation, SchematicStationColor, SchematicStationOptions, SchematicStationPort,
+    SchematicStationSymbol, SchematicStrokeAlignment, SchematicValueError,
 };
 pub use topology::{MetroTopology, TopologyLine, TopologyPath, TopologyPosition, TopologyStation};
 pub use topology_render::render_topology_svg;
