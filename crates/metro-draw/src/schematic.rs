@@ -31,10 +31,11 @@ pub struct SchematicStation {
 }
 
 /// The station symbol requested by the semantic schematic manifest.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SchematicStationSymbol {
-    Circle,
+    // Empty struct variants make `deny_unknown_fields` apply to fieldless cases.
+    Circle {},
     Capsule {
         axis: OctilinearAxis,
         anchor_count: u8,
@@ -96,80 +97,15 @@ pub enum SchematicStationPort {
 }
 
 /// A route's geometric relationship to an interchange capsule's major axis.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SchematicInterchangePort {
-    MajorAxis,
-    RisingOblique,
-    FallingOblique,
-    SinglePerpendicular,
+    // Empty struct variants make `deny_unknown_fields` apply to fieldless cases.
+    MajorAxis {},
+    RisingOblique {},
+    FallingOblique {},
+    SinglePerpendicular {},
     PerpendicularAnchor { index: u8 },
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct EmptySchematicVariant {}
-
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum StrictSchematicStationSymbol {
-    Circle(EmptySchematicVariant),
-    Capsule {
-        axis: OctilinearAxis,
-        anchor_count: u8,
-        anchor_interval: SchematicLength,
-    },
-}
-
-impl<'de> Deserialize<'de> for SchematicStationSymbol {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Ok(
-            match StrictSchematicStationSymbol::deserialize(deserializer)? {
-                StrictSchematicStationSymbol::Circle(_) => Self::Circle,
-                StrictSchematicStationSymbol::Capsule {
-                    axis,
-                    anchor_count,
-                    anchor_interval,
-                } => Self::Capsule {
-                    axis,
-                    anchor_count,
-                    anchor_interval,
-                },
-            },
-        )
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum StrictSchematicInterchangePort {
-    MajorAxis(EmptySchematicVariant),
-    RisingOblique(EmptySchematicVariant),
-    FallingOblique(EmptySchematicVariant),
-    SinglePerpendicular(EmptySchematicVariant),
-    PerpendicularAnchor { index: u8 },
-}
-
-impl<'de> Deserialize<'de> for SchematicInterchangePort {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Ok(
-            match StrictSchematicInterchangePort::deserialize(deserializer)? {
-                StrictSchematicInterchangePort::MajorAxis(_) => Self::MajorAxis,
-                StrictSchematicInterchangePort::RisingOblique(_) => Self::RisingOblique,
-                StrictSchematicInterchangePort::FallingOblique(_) => Self::FallingOblique,
-                StrictSchematicInterchangePort::SinglePerpendicular(_) => Self::SinglePerpendicular,
-                StrictSchematicInterchangePort::PerpendicularAnchor { index } => {
-                    Self::PerpendicularAnchor { index }
-                }
-            },
-        )
-    }
 }
 
 /// An undirected octilinear axis in SVG coordinates.
@@ -367,7 +303,7 @@ lines:
             SchematicRouteVisit::Station {
                 station_id: "central".to_owned(),
                 port: SchematicStationPort::Interchange(
-                    SchematicInterchangePort::SinglePerpendicular,
+                    SchematicInterchangePort::SinglePerpendicular {},
                 ),
             }
         );
