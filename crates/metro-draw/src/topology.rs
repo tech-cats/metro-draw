@@ -53,6 +53,7 @@ impl<'de> Deserialize<'de> for TopologyPosition {
 pub struct TopologyLine {
     pub id: String,
     pub names: LocalizedNames,
+    #[serde(alias = "colour")]
     pub color: String,
     pub paths: Vec<TopologyPath>,
 }
@@ -183,6 +184,27 @@ lines:
         let yaml = MetroTopology::from_json(&json).unwrap().to_yaml().unwrap();
 
         assert_eq!(MetroTopology::from_yaml(&yaml).unwrap(), topology);
+    }
+
+    #[test]
+    fn accepts_british_colour_and_serializes_canonically() {
+        let british_yaml = TOPOLOGY_YAML.replace("    color:", "    colour:");
+        let topology = MetroTopology::from_yaml(&british_yaml).unwrap();
+        let canonical_yaml = topology.to_yaml().unwrap();
+        let british_json = topology
+            .to_json()
+            .unwrap()
+            .replace("\"color\":", "\"colour\":");
+
+        assert_eq!(MetroTopology::from_json(&british_json).unwrap(), topology);
+        assert!(canonical_yaml.contains("  color:"));
+        assert!(!canonical_yaml.contains("colour:"));
+        assert!(
+            topology
+                .to_json()
+                .unwrap()
+                .contains("\"color\":\"#672146\"")
+        );
     }
 
     #[test]

@@ -67,7 +67,9 @@ Global `options` group line styling under `lines` and station styling under
 `stations.common` and `stations.interchange`. Common-station colours support
 the tagged `unified` and `follow-line` policies. Station stroke alignment is
 `inside`, `center`, or `outside`; `centre` is accepted on input and serialised
-canonically as `center`.
+canonically as `center`. Likewise, every `color` field in topology and
+schematic manifests also accepts `colour` on input and is serialised
+canonically as `color`.
 
 This schema is accepted by `mtrd check -s` but does not yet have a schematic
 renderer. [`examples/schematic.yaml`](examples/schematic.yaml) is a

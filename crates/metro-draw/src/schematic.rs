@@ -48,6 +48,7 @@ pub struct SchematicCommonStationOptions {
 #[serde(deny_unknown_fields)]
 pub struct SchematicCommonStationFill {
     pub diameter: SchematicLength,
+    #[serde(alias = "colour")]
     pub color: SchematicStationColor,
 }
 
@@ -57,6 +58,7 @@ pub struct SchematicCommonStationFill {
 pub struct SchematicCommonStationStroke {
     pub width: SchematicLength,
     pub alignment: SchematicStrokeAlignment,
+    #[serde(alias = "colour")]
     pub color: SchematicStationColor,
 }
 
@@ -73,6 +75,7 @@ pub struct SchematicInterchangeStationOptions {
 #[serde(deny_unknown_fields)]
 pub struct SchematicInterchangeStationFill {
     pub width: SchematicLength,
+    #[serde(alias = "colour")]
     pub color: String,
 }
 
@@ -82,6 +85,7 @@ pub struct SchematicInterchangeStationFill {
 pub struct SchematicInterchangeStationStroke {
     pub width: SchematicLength,
     pub alignment: SchematicStrokeAlignment,
+    #[serde(alias = "colour")]
     pub color: String,
 }
 
@@ -142,6 +146,7 @@ pub struct SchematicCorner {
 pub struct SchematicLine {
     pub id: String,
     pub names: LocalizedNames,
+    #[serde(alias = "colour")]
     pub color: String,
     pub paths: Vec<SchematicPath>,
 }
@@ -447,6 +452,34 @@ lines:
                 [2]["port"]["interchange"]["type"],
             "single_perpendicular"
         );
+    }
+
+    #[test]
+    fn accepts_british_spellings_and_serializes_canonically() {
+        let british_yaml = SCHEMATIC_YAML.replace("color:", "colour:");
+        let schematic = SchematicManifest::from_yaml(&british_yaml).unwrap();
+        let canonical_yaml = schematic.to_yaml().unwrap();
+        let british_json = schematic
+            .to_json()
+            .unwrap()
+            .replace("\"color\":", "\"colour\":")
+            .replace("\"center\"", "\"centre\"");
+
+        assert_eq!(
+            SchematicManifest::from_json(&british_json).unwrap(),
+            schematic
+        );
+        assert!(canonical_yaml.contains("alignment: center"));
+        assert!(canonical_yaml.contains("color:"));
+        assert!(!canonical_yaml.contains("alignment: centre"));
+        assert!(!canonical_yaml.contains("colour:"));
+        assert!(
+            schematic
+                .to_json()
+                .unwrap()
+                .contains("\"alignment\":\"center\"")
+        );
+        assert!(schematic.to_json().unwrap().contains("\"color\":"));
     }
 
     #[test]
