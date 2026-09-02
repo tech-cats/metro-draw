@@ -1,13 +1,9 @@
 [package]
-name = "metro-draw"
+name = "mtrd"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-
-[[bin]]
-name = "mtrd"
-path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true

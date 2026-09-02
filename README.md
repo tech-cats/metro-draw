@@ -1,4 +1,4 @@
-# Metro Draw
+# MTRD: MeTRo Draw
 
 `mtrd` works with metro topology and schematic manifests. YAML is the primary
 human-editable format, while JSON uses the same schemas for WebUI interchange.
