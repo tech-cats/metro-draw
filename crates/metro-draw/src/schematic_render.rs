@@ -457,6 +457,7 @@ lines:
         assert!(svg.contains("d=\"M0 40 L36.686 40 A8 8 0 0 1 42.343 42.343 L80 80\""));
         assert!(svg.contains("data-station-id=\"west\""));
         assert!(svg.contains("rotate(-45)"));
+        assert!(svg.contains("width=\"36\" height=\"18\" rx=\"9\" fill=\"#fff\""));
         assert!(svg.ends_with("</svg>\n"));
     }
 

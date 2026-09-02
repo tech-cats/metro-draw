@@ -392,8 +392,7 @@ pub(super) fn prepare_schematic(
                 }
                 let options = &schematic.options.stations.interchange;
                 let diameter = options.fill.width.get().max(line_width);
-                let length =
-                    diameter + f64::from(anchor_count.saturating_sub(1)) * anchor_interval.get();
+                let length = capsule_length(diameter, anchor_count, anchor_interval.get());
                 if !length.is_finite() {
                     return Err(SchematicRenderError::CoordinateRange);
                 }
@@ -421,6 +420,14 @@ pub(super) fn prepare_schematic(
         symbols,
         strokes,
     })
+}
+
+fn capsule_length(diameter: f64, anchor_count: u8, anchor_interval: f64) -> f64 {
+    if anchor_count <= 1 {
+        diameter * 2.0
+    } else {
+        diameter + f64::from(anchor_count - 1) * anchor_interval
+    }
 }
 
 fn station_index(
@@ -963,4 +970,20 @@ fn distance(first: Point, second: Point) -> f64 {
 
 fn nearly_zero(value: f64) -> bool {
     value.abs() <= EPSILON
+}
+
+#[cfg(test)]
+mod tests {
+    use super::capsule_length;
+
+    #[test]
+    fn zero_and_one_perpendicular_anchors_use_two_width_capsules() {
+        assert_eq!(capsule_length(18.0, 0, 24.0), 36.0);
+        assert_eq!(capsule_length(18.0, 1, 24.0), 36.0);
+    }
+
+    #[test]
+    fn multiple_perpendicular_anchors_span_their_intervals() {
+        assert_eq!(capsule_length(18.0, 3, 24.0), 66.0);
+    }
 }
