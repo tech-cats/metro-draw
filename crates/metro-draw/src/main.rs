@@ -5,7 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{ArgAction, Parser, Subcommand};
 use metro_draw::{
-    MetroTopology, SchematicManifest, TopologyRenderError, render_topology_svg, validate_topology,
+    MetroTopology, SchematicManifest, SchematicRenderError, TopologyRenderError,
+    render_schematic_svg, render_topology_svg, validate_schematic, validate_topology,
 };
 use thiserror::Error;
 
@@ -55,11 +56,25 @@ enum Command {
         input: PathBuf,
     },
 
-    /// Render a metro topology as SVG.
+    /// Render a metro manifest as SVG.
     Render {
         /// Generate a topology graph.
-        #[arg(short = 't', long, required = true)]
+        #[arg(
+            short = 't',
+            long,
+            required_unless_present = "schematic",
+            conflicts_with = "schematic"
+        )]
         topology: bool,
+
+        /// Generate a schematic map.
+        #[arg(
+            short = 's',
+            long,
+            required_unless_present = "topology",
+            conflicts_with = "topology"
+        )]
+        schematic: bool,
 
         /// SVG destination (defaults to <input path>.svg).
         #[arg(short = 'o', long, value_name = "FILE", conflicts_with = "timestamp")]
@@ -69,7 +84,7 @@ enum Command {
         #[arg(short = 'T', long, conflicts_with = "output")]
         timestamp: bool,
 
-        /// Metro topology file to render.
+        /// Metro manifest file to render.
         input: PathBuf,
     },
 }
@@ -149,6 +164,12 @@ enum CliError {
     #[error("invalid metro topology: {0}")]
     InvalidTopology(TopologyRenderError),
 
+    #[error("failed to render schematic: {0}")]
+    RenderSchematic(#[from] SchematicRenderError),
+
+    #[error("invalid schematic manifest: {0}")]
+    InvalidSchematic(SchematicRenderError),
+
     #[error("failed to determine the current directory: {0}")]
     CurrentDirectory(#[source] std::io::Error),
 
@@ -191,11 +212,33 @@ fn run(cli: Cli) -> Result<String, CliError> {
             check(&input, verbose, kind)
         }
         Command::Render {
-            topology: _,
+            topology,
+            schematic,
             output,
             timestamp,
             input,
-        } => render_topology(&input, output.as_deref(), timestamp),
+        } => {
+            let kind = if topology {
+                debug_assert!(!schematic);
+                ManifestKind::Topology
+            } else {
+                debug_assert!(schematic);
+                ManifestKind::Schematic
+            };
+            render(&input, output.as_deref(), timestamp, kind)
+        }
+    }
+}
+
+fn render(
+    input: &Path,
+    output: Option<&Path>,
+    timestamp: bool,
+    kind: ManifestKind,
+) -> Result<String, CliError> {
+    match kind {
+        ManifestKind::Topology => render_topology(input, output, timestamp),
+        ManifestKind::Schematic => render_schematic(input, output, timestamp),
     }
 }
 
@@ -207,6 +250,23 @@ fn render_topology(
     let format = Format::from_path(input)?;
     let topology = read_topology(input, format)?;
     let svg = render_topology_svg(&topology)?;
+    let output = render_output_path(input, output, timestamp)?;
+
+    fs::write(&output, svg).map_err(|source| CliError::Write {
+        path: output.clone(),
+        source,
+    })?;
+    Ok(output.display().to_string())
+}
+
+fn render_schematic(
+    input: &Path,
+    output: Option<&Path>,
+    timestamp: bool,
+) -> Result<String, CliError> {
+    let format = Format::from_path(input)?;
+    let schematic = read_schematic(input, format)?;
+    let svg = render_schematic_svg(&schematic)?;
     let output = render_output_path(input, output, timestamp)?;
 
     fs::write(&output, svg).map_err(|source| CliError::Write {
@@ -277,6 +337,7 @@ fn check(input: &Path, verbose: u8, kind: ManifestKind) -> Result<String, CliErr
         }
         ManifestKind::Schematic => {
             let schematic = read_schematic(input, format)?;
+            validate_schematic(&schematic).map_err(CliError::InvalidSchematic)?;
 
             match verbose {
                 0 => Ok(format!("{}: valid", input.display())),
@@ -460,6 +521,7 @@ lines:
             combined.command,
             Command::Render {
                 topology: true,
+                schematic: false,
                 output: Some(output),
                 timestamp: false,
                 input,
@@ -479,6 +541,7 @@ lines:
             separate.command,
             Command::Render {
                 topology: true,
+                schematic: false,
                 output: Some(output),
                 timestamp: false,
                 input,
@@ -490,6 +553,7 @@ lines:
             timestamped.command,
             Command::Render {
                 topology: true,
+                schematic: false,
                 output: None,
                 timestamp: true,
                 input,
@@ -498,8 +562,20 @@ lines:
     }
 
     #[test]
-    fn topology_flag_is_required() {
+    fn render_requires_exactly_one_manifest_kind() {
         assert!(Cli::try_parse_from(["mtrd", "render", "topology.yaml"]).is_err());
+        assert!(Cli::try_parse_from(["mtrd", "render", "-ts", "map.yaml"]).is_err());
+
+        let schematic = Cli::try_parse_from(["mtrd", "render", "-s", "schematic.yaml"]).unwrap();
+        assert!(matches!(
+            schematic.command,
+            Command::Render {
+                topology: false,
+                schematic: true,
+                input,
+                ..
+            } if input == Path::new("schematic.yaml")
+        ));
     }
 
     #[test]
@@ -677,6 +753,32 @@ lines:
         );
         let svg = fs::read_to_string(&output).unwrap();
         assert!(svg.contains("<svg"));
+        assert!(svg.contains("data-line-id=\"red\""));
+        assert!(svg.contains("data-station-id=\"central\""));
+
+        fs::remove_file(input).unwrap();
+        fs::remove_file(output).unwrap();
+    }
+
+    #[test]
+    fn renders_schematic_svg_to_the_requested_file() {
+        let input = temporary_path("yaml");
+        let output = temporary_path("svg");
+        let yaml = SCHEMATIC_YAML.replace(
+            "    paths: []",
+            "    paths:\n      - visits:\n          - type: station\n            station_id: central\n            port:\n              type: single_line\n          - type: station\n            station_id: east\n            port:\n              type: single_line\n        closed: false",
+        ).replace(
+            "corners: []",
+            "  - id: east\n    position: [41.0, 2.0]\n    names: { en: [East] }\n    symbol: { type: circle }\ncorners: []",
+        );
+        fs::write(&input, yaml).unwrap();
+
+        assert_eq!(
+            render_schematic(&input, Some(&output), false).unwrap(),
+            output.display().to_string()
+        );
+        let svg = fs::read_to_string(&output).unwrap();
+        assert!(svg.contains("<title>Metro schematic map</title>"));
         assert!(svg.contains("data-line-id=\"red\""));
         assert!(svg.contains("data-station-id=\"central\""));
 

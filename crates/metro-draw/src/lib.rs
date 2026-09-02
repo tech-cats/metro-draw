@@ -8,6 +8,8 @@
 
 mod manifest_format;
 mod schematic;
+mod schematic_render;
+mod schematic_validation;
 mod topology;
 mod topology_layout;
 mod topology_render;
@@ -24,6 +26,8 @@ pub use schematic::{
     SchematicStation, SchematicStationColor, SchematicStationOptions, SchematicStationPort,
     SchematicStationSymbol, SchematicStrokeAlignment, SchematicValueError,
 };
+pub use schematic_render::render_schematic_svg;
+pub use schematic_validation::{SchematicRenderError, validate_schematic};
 pub use topology::{MetroTopology, TopologyLine, TopologyPath, TopologyPosition, TopologyStation};
 pub use topology_render::render_topology_svg;
 pub use topology_validation::{TopologyRenderError, validate_topology};

@@ -24,6 +24,10 @@ mtrd check --schematic -vv schematic.yaml
 mtrd render -to map.svg map.yaml
 mtrd render -o map.svg -t map.yaml
 
+# Render a schematic manifest as an SVG schematic map.
+mtrd render -s schematic.yaml
+mtrd render --schematic -o schematic.svg schematic.json
+
 # Without -o or -T, append .svg to the input path.
 mtrd render --topology map.yaml
 
@@ -48,9 +52,11 @@ These checks concern the manifest itself. Rendering can still fail because of
 an output filesystem error, such as an unwritable destination.
 
 For a schematic manifest, a successful check means it satisfies the strict
-`SchematicManifest` YAML/JSON schema, including finite positions, finite
-positive lengths, and rejection of unknown fields. Schematic rendering is not
-yet implemented.
+`SchematicManifest` YAML/JSON schema and every semantic and geometric
+invariant required by the renderer. This includes valid IDs and references,
+station-port compatibility, complete interchange anchors, octilinear legs,
+explicit and feasible corners, exclusive path geometry, finite render bounds,
+finite positions, finite positive lengths, and rejection of unknown fields.
 
 With `check -v`, `mtrd` prints the parsed map as canonical YAML after it passes
 validation. With `check -vv`, it prints the detailed Rust debug representation.
@@ -71,6 +77,10 @@ canonically as `center`. Likewise, every `color` field in topology and
 schematic manifests also accepts `colour` on input and is serialised
 canonically as `color`.
 
-This schema is accepted by `mtrd check -s` but does not yet have a schematic
-renderer. [`examples/schematic.yaml`](examples/schematic.yaml) is a
-representative semantic manifest.
+`render_schematic_svg` validates, resolves, and renders this schema in the
+library. The `mtrd render -s` CLI is a thin file adapter around that API and
+uses the same output naming options as topology rendering. It draws line
+strokes, rounded explicit corners, circles, and oriented interchange capsules;
+labels, legends, titles, and line marks remain deferred.
+[`examples/schematic.yaml`](examples/schematic.yaml) is a representative
+semantic manifest.
