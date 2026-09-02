@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This is a Rust 2024 workspace with one package, `crates/metro-draw`. The library data model and YAML/JSON serialization live in `src/lib.rs`; topology validation and SVG rendering live in `src/topology_render.rs`; `src/main.rs` is the thin `mtrd` CLI adapter. Tests are colocated under `#[cfg(test)]`.
+This Rust 2024 workspace contains `crates/metro-draw`. `src/lib.rs` is the public facade; topology and schematic models live in `src/topology.rs` and `src/schematic.rs`. Layout, validation, and rendering live in the `src/topology_*.rs` modules. `src/main.rs` is the thin `mtrd` CLI adapter. Tests are colocated under `#[cfg(test)]`.
 
 `README.md` documents the CLI and manifest contract. `docs/` contains design notes, including proposed schematic-map APIs that are not yet implemented, while `images/` holds documentation graphics. `target/`, `tmp/`, and `examples/` are ignored build, scratch, and output paths.
 

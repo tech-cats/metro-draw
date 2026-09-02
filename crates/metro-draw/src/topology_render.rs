@@ -1,55 +1,15 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt::Write;
 
-use thiserror::Error;
+use crate::{
+    MetroTopology, TopologyPath, TopologyStation,
+    topology_layout::Bounds,
+    topology_validation::{TopologyRenderError, station_index, validate_topology},
+};
 
-use crate::{MetroTopology, TopologyPath, TopologyStation};
-
-const SCALE: f64 = 80.0;
-const PADDING: f64 = 48.0;
-const LABEL_SPACE: f64 = 160.0;
 const LINE_WIDTH: f64 = 8.0;
 const LANE_GAP: f64 = 3.0;
 const TAPER_LENGTH: f64 = 24.0;
-
-/// An error encountered while rendering a metro topology.
-#[derive(Debug, Error, PartialEq)]
-pub enum TopologyRenderError {
-    #[error("station id must not be empty")]
-    EmptyStationId,
-
-    #[error("station '{station}' has a non-finite position")]
-    NonFinitePosition { station: String },
-
-    #[error("station id '{station}' is defined more than once")]
-    DuplicateStation { station: String },
-
-    #[error("line id must not be empty")]
-    EmptyLineId,
-
-    #[error("line id '{line}' is defined more than once")]
-    DuplicateLine { line: String },
-
-    #[error("line '{line}' refers to unknown station '{station}'")]
-    UnknownStation { line: String, station: String },
-
-    #[error("path {path} of line '{line}' must contain at least {minimum} stations")]
-    PathTooShort {
-        line: String,
-        path: usize,
-        minimum: usize,
-    },
-
-    #[error("path {path} of line '{line}' contains station '{station}' more than once")]
-    DuplicateStationInPath {
-        line: String,
-        path: usize,
-        station: String,
-    },
-
-    #[error("station coordinates are too large to render")]
-    CoordinateRange,
-}
 
 /// Render a topology as an SVG topology graph.
 ///
@@ -61,12 +21,9 @@ pub fn render_topology_svg(topology: &MetroTopology) -> Result<String, TopologyR
     let stations = station_index(topology)?;
     let segment_lanes = segment_lanes(topology);
     let bounds = Bounds::from_topology(topology);
-    let width = (bounds.max_x - bounds.min_x) * SCALE + PADDING * 2.0 + LABEL_SPACE;
-    let height = (bounds.max_y - bounds.min_y) * SCALE + PADDING * 2.0;
-
-    if !width.is_finite() || !height.is_finite() {
-        return Err(TopologyRenderError::CoordinateRange);
-    }
+    let (width, height) = bounds
+        .viewport()
+        .ok_or(TopologyRenderError::CoordinateRange)?;
 
     let mut svg = String::new();
     writeln!(
@@ -94,7 +51,7 @@ pub fn render_topology_svg(topology: &MetroTopology) -> Result<String, TopologyR
                         station: station_id.clone(),
                     }
                 })?;
-                let (x, y) = bounds.project(station)?;
+                let (x, y) = project(bounds, station)?;
                 writeln!(
                     svg,
                     "    <path data-line-id=\"{}\" d=\"M{} {}\" stroke=\"{}\" stroke-width=\"{}\" />",
@@ -149,7 +106,7 @@ pub fn render_topology_svg(topology: &MetroTopology) -> Result<String, TopologyR
     writeln!(svg, "  <g font-family=\"sans-serif\" font-size=\"14\">").unwrap();
 
     for station in &topology.stations {
-        let (x, y) = bounds.project(station)?;
+        let (x, y) = project(bounds, station)?;
         let label = station_label(station);
         writeln!(
             svg,
@@ -167,63 +124,6 @@ pub fn render_topology_svg(topology: &MetroTopology) -> Result<String, TopologyR
     writeln!(svg, "  </g>").unwrap();
     writeln!(svg, "</svg>").unwrap();
     Ok(svg)
-}
-
-/// Validate all invariants required to render a topology graph.
-pub fn validate_topology(topology: &MetroTopology) -> Result<(), TopologyRenderError> {
-    let stations = station_index(topology)?;
-    let mut line_ids = HashSet::with_capacity(topology.lines.len());
-
-    for line in &topology.lines {
-        if line.id.trim().is_empty() {
-            return Err(TopologyRenderError::EmptyLineId);
-        }
-        if !line_ids.insert(line.id.as_str()) {
-            return Err(TopologyRenderError::DuplicateLine {
-                line: line.id.clone(),
-            });
-        }
-
-        for (path_index, path) in line.paths.iter().enumerate() {
-            let minimum = if path.closed { 3 } else { 2 };
-            if path.stations.len() < minimum {
-                return Err(TopologyRenderError::PathTooShort {
-                    line: line.id.clone(),
-                    path: path_index + 1,
-                    minimum,
-                });
-            }
-
-            let mut path_stations = HashSet::with_capacity(path.stations.len());
-            for station in &path.stations {
-                if !stations.contains_key(station.as_str()) {
-                    return Err(TopologyRenderError::UnknownStation {
-                        line: line.id.clone(),
-                        station: station.clone(),
-                    });
-                }
-                if !path_stations.insert(station.as_str()) {
-                    return Err(TopologyRenderError::DuplicateStationInPath {
-                        line: line.id.clone(),
-                        path: path_index + 1,
-                        station: station.clone(),
-                    });
-                }
-            }
-        }
-    }
-
-    let bounds = Bounds::from_topology(topology);
-    let width = (bounds.max_x - bounds.min_x) * SCALE + PADDING * 2.0 + LABEL_SPACE;
-    let height = (bounds.max_y - bounds.min_y) * SCALE + PADDING * 2.0;
-    if !width.is_finite() || !height.is_finite() {
-        return Err(TopologyRenderError::CoordinateRange);
-    }
-    for station in &topology.stations {
-        bounds.project(station)?;
-    }
-
-    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -289,8 +189,8 @@ fn segment_path(
     canonical_direction: bool,
     offset: f64,
 ) -> Result<String, TopologyRenderError> {
-    let (start_x, start_y) = bounds.project(start)?;
-    let (end_x, end_y) = bounds.project(end)?;
+    let (start_x, start_y) = project(bounds, start)?;
+    let (end_x, end_y) = project(bounds, end)?;
     let dx = end_x - start_x;
     let dy = end_y - start_y;
     let length = dx.hypot(dy);
@@ -329,71 +229,10 @@ fn segment_path(
     ))
 }
 
-fn station_index(
-    topology: &MetroTopology,
-) -> Result<HashMap<&str, &TopologyStation>, TopologyRenderError> {
-    let mut stations = HashMap::with_capacity(topology.stations.len());
-    for station in &topology.stations {
-        if station.id.trim().is_empty() {
-            return Err(TopologyRenderError::EmptyStationId);
-        }
-        if !station.position.x.is_finite() || !station.position.y.is_finite() {
-            return Err(TopologyRenderError::NonFinitePosition {
-                station: station.id.clone(),
-            });
-        }
-        if stations.insert(station.id.as_str(), station).is_some() {
-            return Err(TopologyRenderError::DuplicateStation {
-                station: station.id.clone(),
-            });
-        }
-    }
-    Ok(stations)
-}
-
-#[derive(Debug, Clone, Copy)]
-struct Bounds {
-    min_x: f64,
-    max_x: f64,
-    min_y: f64,
-    max_y: f64,
-}
-
-impl Bounds {
-    fn from_topology(topology: &MetroTopology) -> Self {
-        let Some(first) = topology.stations.first() else {
-            return Self {
-                min_x: 0.0,
-                max_x: 0.0,
-                min_y: 0.0,
-                max_y: 0.0,
-            };
-        };
-
-        let mut bounds = Self {
-            min_x: first.position.x,
-            max_x: first.position.x,
-            min_y: first.position.y,
-            max_y: first.position.y,
-        };
-        for station in &topology.stations[1..] {
-            bounds.min_x = bounds.min_x.min(station.position.x);
-            bounds.max_x = bounds.max_x.max(station.position.x);
-            bounds.min_y = bounds.min_y.min(station.position.y);
-            bounds.max_y = bounds.max_y.max(station.position.y);
-        }
-        bounds
-    }
-
-    fn project(self, station: &TopologyStation) -> Result<(f64, f64), TopologyRenderError> {
-        let x = (station.position.x - self.min_x) * SCALE + PADDING;
-        let y = (self.max_y - station.position.y) * SCALE + PADDING;
-        if x.is_finite() && y.is_finite() {
-            Ok((x, y))
-        } else {
-            Err(TopologyRenderError::CoordinateRange)
-        }
-    }
+fn project(bounds: Bounds, station: &TopologyStation) -> Result<(f64, f64), TopologyRenderError> {
+    bounds
+        .project(station)
+        .ok_or(TopologyRenderError::CoordinateRange)
 }
 
 fn station_label(station: &TopologyStation) -> &str {
@@ -549,104 +388,6 @@ mod tests {
             Err(TopologyRenderError::UnknownStation {
                 line: "red\"line".into(),
                 station: "missing".into(),
-            })
-        );
-    }
-
-    #[test]
-    fn validates_ids_station_references_and_coordinates() {
-        let mut invalid = topology();
-        invalid.stations[0].id.clear();
-        assert_eq!(
-            validate_topology(&invalid),
-            Err(TopologyRenderError::EmptyStationId)
-        );
-
-        let mut invalid = topology();
-        invalid.stations[1].id = invalid.stations[0].id.clone();
-        assert_eq!(
-            validate_topology(&invalid),
-            Err(TopologyRenderError::DuplicateStation {
-                station: "south&west".into()
-            })
-        );
-
-        let mut invalid = topology();
-        invalid.stations[0].position.x = f64::NAN;
-        assert_eq!(
-            validate_topology(&invalid),
-            Err(TopologyRenderError::NonFinitePosition {
-                station: "south&west".into()
-            })
-        );
-
-        let mut invalid = topology();
-        invalid.stations[0].position.x = -f64::MAX;
-        invalid.stations[1].position.x = f64::MAX;
-        assert_eq!(
-            validate_topology(&invalid),
-            Err(TopologyRenderError::CoordinateRange)
-        );
-
-        let mut invalid = topology();
-        invalid.lines[0].id.clear();
-        assert_eq!(
-            validate_topology(&invalid),
-            Err(TopologyRenderError::EmptyLineId)
-        );
-
-        let mut invalid = topology();
-        invalid.lines.push(invalid.lines[0].clone());
-        assert_eq!(
-            validate_topology(&invalid),
-            Err(TopologyRenderError::DuplicateLine {
-                line: "red\"line".into()
-            })
-        );
-
-        let mut invalid = topology();
-        invalid.lines[0].paths[0].stations[1] = "missing".into();
-        assert_eq!(
-            validate_topology(&invalid),
-            Err(TopologyRenderError::UnknownStation {
-                line: "red\"line".into(),
-                station: "missing".into()
-            })
-        );
-    }
-
-    #[test]
-    fn validates_path_lengths_and_repeated_stations() {
-        let mut invalid = topology();
-        invalid.lines[0].paths[0].stations.pop();
-        assert_eq!(
-            validate_topology(&invalid),
-            Err(TopologyRenderError::PathTooShort {
-                line: "red\"line".into(),
-                path: 1,
-                minimum: 2,
-            })
-        );
-
-        let mut invalid = topology();
-        invalid.lines[0].paths[0].closed = true;
-        assert_eq!(
-            validate_topology(&invalid),
-            Err(TopologyRenderError::PathTooShort {
-                line: "red\"line".into(),
-                path: 1,
-                minimum: 3,
-            })
-        );
-
-        let mut invalid = topology();
-        invalid.lines[0].paths[0].stations.push("south&west".into());
-        assert_eq!(
-            validate_topology(&invalid),
-            Err(TopologyRenderError::DuplicateStationInPath {
-                line: "red\"line".into(),
-                path: 1,
-                station: "south&west".into(),
             })
         );
     }
