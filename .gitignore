@@ -1,3 +1,5 @@
-/target
-/examples
-/tmp
+/target/
+/examples/
+/tmp/
+/docs/**/drafts/
+/images/screenshots/
