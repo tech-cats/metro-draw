@@ -5,10 +5,11 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1-dev"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/cclvi256/metro-draw"
+readme = "README.md"
 
 [workspace.dependencies]
 clap = { version = "4.5", features = ["derive"] }
