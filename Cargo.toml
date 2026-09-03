@@ -8,7 +8,7 @@ members = [
 version = "0.1.1-dev"
 edition = "2024"
 license = "Apache-2.0"
-repository = "https://github.com/cclvi256/metro-draw"
+repository = "https://github.com/tech-cats/metro-draw"
 readme = "README.md"
 
 [workspace.dependencies]
