@@ -507,6 +507,17 @@ lines:
     }
 
     #[test]
+    fn prints_version_with_long_and_short_flags() {
+        let expected = format!("mtrd {}\n", env!("CARGO_PKG_VERSION"));
+
+        for flag in ["--version", "-V"] {
+            let error = Cli::try_parse_from(["mtrd", flag]).unwrap_err();
+            assert_eq!(error.kind(), clap::error::ErrorKind::DisplayVersion);
+            assert_eq!(error.to_string(), expected);
+        }
+    }
+
+    #[test]
     fn check_requires_exactly_one_manifest_kind() {
         assert!(Cli::try_parse_from(["mtrd", "check", "map.yaml"]).is_err());
         assert!(Cli::try_parse_from(["mtrd", "check", "-ts", "map.yaml"]).is_err());

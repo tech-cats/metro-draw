@@ -10,7 +10,7 @@ updates:
     directory: "/"
     schedule:
       interval: "cron"
-      cronjob: "0 0 * * 5"
+      cronjob: "0 0 * * *"
     groups:
       cargo-patch:
         patterns:
@@ -33,7 +33,7 @@ updates:
     directory: "/"
     schedule:
       interval: "cron"
-      cronjob: "0 0 * * 5"
+      cronjob: "0 0 * * *"
     labels:
       - "dependencies"
       - "rust"
@@ -45,7 +45,7 @@ updates:
     directory: "/"
     schedule:
       interval: "cron"
-      cronjob: "0 0 * * 5"
+      cronjob: "0 0 * * *"
     groups:
       github-actions:
         patterns:

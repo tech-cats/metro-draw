@@ -6,6 +6,10 @@ human-editable format, while JSON uses the same schemas for WebUI interchange.
 ## Commands
 
 ```console
+# Print the installed version. These flag forms are equivalent.
+mtrd --version
+mtrd -V
+
 # Convert in either direction. File extensions select the formats.
 mtrd convert map.yaml map.json
 mtrd convert map.json map.yaml
