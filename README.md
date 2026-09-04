@@ -73,8 +73,11 @@ supports strict YAML and equivalent JSON serialisation through `from_yaml`,
 `to_yaml`, `from_json`, and `to_json`. Schematic positions are `[x, y]` arrays,
 lengths are finite positive scalars, and unknown fields are rejected.
 
-Global `options` group line styling under `lines` and station styling under
-`stations.common` and `stations.interchange`. Common-station colours support
+Global `options` set either an opaque background `color` or
+`transparent: true`, group line styling under `lines`, and station styling
+under `stations.common` and `stations.interchange`. An explicit
+`transparent: false` may accompany the background colour.
+Common-station colours support
 the tagged `unified` and `follow-line` policies. Station stroke alignment is
 `inside`, `center`, or `outside`; `centre` is accepted on input and serialised
 canonically as `center`. Likewise, every `color` field in topology and

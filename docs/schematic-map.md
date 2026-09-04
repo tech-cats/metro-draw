@@ -337,11 +337,16 @@ exactly one line.
 
 ```rust
 struct SchematicOptions {
+    background: SchematicBackgroundOptions,
     lines: SchematicLineOptions,
     stations: SchematicStationOptions,
 }
 ```
 
+`background` contains either an opaque `color` or `transparent: true`.
+`transparent: false` may accompany a colour and is omitted from canonical
+output, while `transparent: true` conflicts with a colour. `color` also accepts
+`colour` on input and is canonicalised to `color` on output.
 `lines.width` is the width of every line stroke. `stations.common` and
 `stations.interchange` independently define the fill and stroke of circle and
 capsule symbols. A common fill has a `diameter`; an interchange fill has a
@@ -405,6 +410,8 @@ This semantic fragment demonstrates an explicit corner between two stations:
 
 ```yaml
 options:
+  background:
+    color: "#ffffff"
   lines:
     width: 8.0
   stations:

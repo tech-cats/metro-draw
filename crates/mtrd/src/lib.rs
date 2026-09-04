@@ -18,9 +18,9 @@ mod topology_validation;
 use std::collections::BTreeMap;
 
 pub use schematic::{
-    OctilinearAxis, SchematicCommonStationFill, SchematicCommonStationOptions,
-    SchematicCommonStationStroke, SchematicCorner, SchematicInterchangePort,
-    SchematicInterchangeStationFill, SchematicInterchangeStationOptions,
+    OctilinearAxis, SchematicBackgroundOptions, SchematicCommonStationFill,
+    SchematicCommonStationOptions, SchematicCommonStationStroke, SchematicCorner,
+    SchematicInterchangePort, SchematicInterchangeStationFill, SchematicInterchangeStationOptions,
     SchematicInterchangeStationStroke, SchematicLength, SchematicLine, SchematicLineOptions,
     SchematicManifest, SchematicOptions, SchematicPath, SchematicPoint, SchematicRouteVisit,
     SchematicStation, SchematicStationColor, SchematicStationOptions, SchematicStationPort,

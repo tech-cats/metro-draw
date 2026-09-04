@@ -432,6 +432,8 @@ lines:
 
     const SCHEMATIC_YAML: &str = r##"
 options:
+  background:
+    color: "#ffffff"
   lines:
     width: 8.0
   stations:

@@ -32,6 +32,18 @@ pub fn render_schematic_svg(schematic: &SchematicManifest) -> Result<String, Sch
     )
     .unwrap();
     writeln!(svg, "  <title>Metro schematic map</title>").unwrap();
+    if let crate::SchematicBackgroundOptions::Color { color } = &schematic.options.background {
+        writeln!(
+            svg,
+            "  <rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\" />",
+            number(bounds.min_x),
+            number(bounds.min_y),
+            number(bounds.width()),
+            number(bounds.height()),
+            xml_escape(color),
+        )
+        .unwrap();
+    }
     writeln!(
         svg,
         "  <g fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\">"
@@ -416,6 +428,7 @@ mod tests {
 
     const YAML: &str = r##"
 options:
+  background: { transparent: true }
   lines: { width: 8.0 }
   stations:
     common:
@@ -453,12 +466,23 @@ lines:
         let svg = render_schematic_svg(&schematic).unwrap();
 
         assert!(svg.contains("<title>Metro schematic map</title>"));
+        assert!(!svg.contains("fill=\"#abcdef\""));
         assert!(svg.contains("data-line-id=\"red&amp;line\""));
         assert!(svg.contains("d=\"M0 40 L36.686 40 A8 8 0 0 1 42.343 42.343 L80 80\""));
         assert!(svg.contains("data-station-id=\"west\""));
         assert!(svg.contains("rotate(-45)"));
         assert!(svg.contains("width=\"36\" height=\"18\" rx=\"9\" fill=\"#fff\""));
         assert!(svg.ends_with("</svg>\n"));
+
+        let opaque = SchematicManifest::from_yaml(
+            &YAML.replace("{ transparent: true }", "{ color: \"#abcdef\" }"),
+        )
+        .unwrap();
+        let opaque_svg = render_schematic_svg(&opaque).unwrap();
+        assert!(opaque_svg.contains("fill=\"#abcdef\" />"));
+        assert!(
+            opaque_svg.find("fill=\"#abcdef\"").unwrap() < opaque_svg.find("data-line-id").unwrap()
+        );
     }
 
     #[test]

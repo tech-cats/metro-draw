@@ -1,4 +1,4 @@
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, ser::SerializeMap};
 
 use crate::{LocalizedNames, manifest_format::inline_yaml_positions};
 
@@ -16,8 +16,72 @@ pub struct SchematicManifest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SchematicOptions {
+    pub background: SchematicBackgroundOptions,
     pub lines: SchematicLineOptions,
     pub stations: SchematicStationOptions,
+}
+
+/// An opaque colour or a transparent map background.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SchematicBackgroundOptions {
+    Color { color: String },
+    Transparent,
+}
+
+impl Serialize for SchematicBackgroundOptions {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(1))?;
+        match self {
+            Self::Color { color } => map.serialize_entry("color", color)?,
+            Self::Transparent => map.serialize_entry("transparent", &true)?,
+        }
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for SchematicBackgroundOptions {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Fields {
+            #[serde(alias = "colour")]
+            color: Option<String>,
+            transparent: Option<bool>,
+        }
+
+        match Fields::deserialize(deserializer)? {
+            Fields {
+                color: Some(color),
+                transparent: None | Some(false),
+            } => Ok(Self::Color { color }),
+            Fields {
+                color: None,
+                transparent: Some(true),
+            } => Ok(Self::Transparent),
+            Fields {
+                color: None,
+                transparent: Some(false),
+            } => Err(serde::de::Error::custom("transparent must be true")),
+            Fields {
+                color: Some(_),
+                transparent: Some(true),
+            } => Err(serde::de::Error::custom(
+                "background color conflicts with transparent: true",
+            )),
+            Fields {
+                color: None,
+                transparent: None,
+            } => Err(serde::de::Error::custom(
+                "background must contain color or transparent: true",
+            )),
+        }
+    }
 }
 
 /// Global styling shared by all metro lines.
@@ -329,6 +393,8 @@ mod tests {
 
     const SCHEMATIC_YAML: &str = r##"
 options:
+  background:
+    color: "#ffffff"
   lines:
     width: 8.0
   stations:
@@ -406,6 +472,12 @@ lines:
 
         assert_eq!(schematic.options.lines.width.get(), 8.0);
         assert_eq!(
+            schematic.options.background,
+            SchematicBackgroundOptions::Color {
+                color: "#ffffff".to_owned()
+            }
+        );
+        assert_eq!(
             schematic.options.stations.common.stroke.alignment,
             SchematicStrokeAlignment::Center
         );
@@ -433,6 +505,9 @@ lines:
         assert!(encoded.contains("position: [0.0, 40.0]"));
         assert!(encoded.contains("alignment: center"));
         assert!(!encoded.contains("alignment: centre"));
+        assert_eq!(value["options"]["background"]["color"], "#ffffff");
+        assert!(value["options"]["background"]["colour"].is_null());
+        assert!(value["options"]["background"]["transparent"].is_null());
         assert_eq!(
             value["lines"][0]["paths"][0]["visits"][2]["port"]["interchange"]["type"],
             "single_perpendicular"
@@ -503,6 +578,61 @@ lines:
         assert_eq!(
             SchematicLength::new(-1.0),
             Err(SchematicValueError::InvalidLength(-1.0))
+        );
+    }
+
+    #[test]
+    fn enforces_exclusive_background_variants() {
+        let color_background = "  background:\n    color: \"#ffffff\"";
+        let transparent =
+            SCHEMATIC_YAML.replace(color_background, "  background:\n    transparent: true");
+        let decoded = SchematicManifest::from_yaml(&transparent).unwrap();
+        let encoded = decoded.to_yaml().unwrap();
+        let value = serde_yaml::from_str::<serde_yaml::Value>(&encoded).unwrap();
+
+        assert_eq!(
+            decoded.options.background,
+            SchematicBackgroundOptions::Transparent
+        );
+        assert_eq!(value["options"]["background"]["transparent"], true);
+        assert!(value["options"]["background"]["color"].is_null());
+        for spelling in ["color", "colour"] {
+            let opaque = SCHEMATIC_YAML.replace(
+                color_background,
+                &format!("  background:\n    {spelling}: \"#ffffff\"\n    transparent: false"),
+            );
+            let decoded = SchematicManifest::from_yaml(&opaque).unwrap();
+            let canonical =
+                serde_yaml::from_str::<serde_yaml::Value>(&decoded.to_yaml().unwrap()).unwrap();
+
+            assert_eq!(
+                decoded.options.background,
+                SchematicBackgroundOptions::Color {
+                    color: "#ffffff".to_owned()
+                }
+            );
+            assert_eq!(canonical["options"]["background"]["color"], "#ffffff");
+            assert!(canonical["options"]["background"]["transparent"].is_null());
+            assert!(canonical["options"]["background"]["colour"].is_null());
+        }
+        assert!(
+            SchematicManifest::from_yaml(&SCHEMATIC_YAML.replace(
+                color_background,
+                "  background:\n    color: \"#ffffff\"\n    transparent: true"
+            ))
+            .is_err()
+        );
+        assert!(
+            SchematicManifest::from_yaml(
+                &SCHEMATIC_YAML.replace(color_background, "  background:\n    transparent: false")
+            )
+            .is_err()
+        );
+        assert!(
+            SchematicManifest::from_yaml(
+                &SCHEMATIC_YAML.replace(color_background, "  background: {}")
+            )
+            .is_err()
         );
     }
 
